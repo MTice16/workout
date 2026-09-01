@@ -412,10 +412,16 @@ function pushLog(key, entry){
          (LOGS[key]=LOGS[key]||{})[id]=entry; persistLocal(); render(); }
 }
 // superset groups for a day, always normalised to arrays
+// each group is {keys:[...], reps:<string|null>}. Legacy groups were plain arrays.
+function normGroup(g){
+  if(Array.isArray(g)) return {keys: g.slice(), reps: null};
+  const keys = Array.isArray(g.keys) ? g.keys.slice() : Object.values(g.keys || {});
+  return {keys, reps: g.reps || null};
+}
 function ssFor(dayKey){
   const v = SS[dayKey];
   if(!v) return [];
-  return (Array.isArray(v)?v:Object.values(v)).map(g=>Array.isArray(g)?g:Object.values(g));
+  return (Array.isArray(v)?v:Object.values(v)).map(normGroup);
 }
 function setSS(dayKey, arr){
   if(USE_CLOUD){ db.ref("supersets/"+dayKey).set(arr); }
@@ -474,7 +480,13 @@ function renderNav(){
 }
 
 /* ---------- render a single exercise card ---------- */
-function exerciseCard(ex){
+// show a plain number as "135 lbs"; leave non-numeric notes (bar, 2x 35lbs) alone
+function fmtW(v){
+  if(v==null || v==="") return "";
+  v = String(v).trim();
+  return /^\d+(\.\d+)?$/.test(v) ? v+" lbs" : v;
+}
+function exerciseCard(ex, repsOverride){
   const key = exKey(ex.name);
   const store = logsFor(key);
   const plan = parsePlan(ex.note);
@@ -495,7 +507,7 @@ function exerciseCard(ex){
   }
   const title = document.createElement("button");
   title.className = "extitle";
-  const extra = ex.reps + (plan.raw ? " · " + plan.raw : "");
+  const extra = (repsOverride || ex.reps) + (plan.raw ? " · " + plan.raw : "");
   title.innerHTML = `<span class="tnm">${ex.name}</span><span class="trp">${extra}&nbsp;🖼</span>`;
   title.onclick = ()=>{
     if(editMode){ selSet.has(key) ? selSet.delete(key) : selSet.add(key); render(); }
@@ -513,15 +525,18 @@ function exerciseCard(ex){
     cell.className = "cell " + p;
     cell.innerHTML =
       `<label class="plab ${p}">${PEOPLE[p]}</label>
-       <input class="wbox" inputmode="decimal" data-person="${p}" value="${val}" placeholder="—">`;
+       <input class="wbox" inputmode="decimal" data-person="${p}" value="${fmtW(val)}" placeholder="—">`;
     boxes.appendChild(cell);
   });
-  // autosave each box when you finish editing it
   boxes.querySelectorAll(".wbox").forEach(inp=>{
+    // strip " lbs" while editing so you just see/type the number
+    inp.onfocus = ()=>{ inp.value = inp.value.replace(/\s*lbs\s*$/i, ""); };
+    // on save: store the plain number, then show it with "lbs"
     inp.onchange = ()=>{
-      const weight = inp.value.trim();
+      const weight = inp.value.trim().replace(/\s*lbs\s*$/i, "");
       if(!weight) return;
       pushLog(key, {person: inp.dataset.person, weight, ts: Date.now()});
+      inp.value = fmtW(weight);
       inp.classList.add("okflash");
       setTimeout(()=>inp.classList.remove("okflash"), 700);
     };
@@ -560,15 +575,30 @@ function render(){
   if(mk) mk.onclick = ()=>{
     const keys = [...selSet];
     if(keys.length < 2) return;
-    const arr = ssFor(dayKey).map(g=>g.filter(k=>!keys.includes(k))).filter(g=>g.length>=2);
-    arr.push(keys);
+    const chosen = wk.ex.filter(e=>keys.includes(exKey(e.name)));
+    // the whole superset shares one sets×reps; ask which if they differ
+    let reps = chosen[0].reps;
+    const distinct = [...new Set(chosen.map(e=>e.reps))];
+    if(distinct.length > 1){
+      let msg = "Which sets × reps should this superset use?\n";
+      chosen.forEach((e,i)=> msg += `\n${i+1}) ${e.name} — ${e.reps}`);
+      const ans = prompt(msg + "\n\nType a number:", "1");
+      if(ans === null) return;                        // cancelled → don't group
+      const idx = parseInt(ans, 10) - 1;
+      if(isNaN(idx) || idx < 0 || idx >= chosen.length) return;
+      reps = chosen[idx].reps;
+    }
+    const arr = ssFor(dayKey)
+      .map(g=>({keys: g.keys.filter(k=>!keys.includes(k)), reps: g.reps}))
+      .filter(g=>g.keys.length >= 2);
+    arr.push({keys, reps});
     setSS(dayKey, arr); selSet.clear(); render();
   };
 
   // superset groups for this day: array of arrays of exercise keys
-  const groups = ssFor(dayKey).map(g=>g.slice());
+  const groups = ssFor(dayKey);
   const groupOf = {};
-  groups.forEach((g,gi)=> g.forEach(k=> groupOf[k]=gi));
+  groups.forEach((g,gi)=> g.keys.forEach(k=> groupOf[k]=gi));
   const done = {};
 
   wk.ex.forEach(ex=>{
@@ -576,13 +606,15 @@ function render(){
     if(gi!==undefined){
       if(done[gi]) return;
       done[gi] = true;
-      const members = wk.ex.filter(e=>groups[gi].includes(exKey(e.name)));
+      const g = groups[gi];
+      const members = wk.ex.filter(e=>g.keys.includes(exKey(e.name)));
       if(members.length < 2){ main.appendChild(exerciseCard(ex)); return; }
       const box = document.createElement("div");
       box.className = "ssgroup";
-      box.innerHTML = `<div class="sslabel"><span>⛓ Superset · ${members.length} exercises</span>`
+      const repsTag = g.reps ? " · " + g.reps : "";
+      box.innerHTML = `<div class="sslabel"><span>⛓ Superset${repsTag}</span>`
         + `<button class="ssungroup" data-gi="${gi}">Ungroup ✕</button></div>`;
-      members.forEach(m=> box.appendChild(exerciseCard(m)));
+      members.forEach(m=> box.appendChild(exerciseCard(m, g.reps)));
       main.appendChild(box);
     } else {
       main.appendChild(exerciseCard(ex));
