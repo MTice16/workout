@@ -587,7 +587,7 @@ function exerciseCard(ex, opts){
   if(opts.showReps){
     const rp = document.createElement("button");
     rp.className = "repsedit";
-    rp.textContent = (opts.reps || ex.reps) + (plan.raw ? " ·"+plan.raw : "");
+    rp.textContent = (opts.reps || ex.reps);
     rp.onclick = (e)=>{ e.stopPropagation(); if(opts.onEditReps) opts.onEditReps(); };
     trow.appendChild(rp);
   }
