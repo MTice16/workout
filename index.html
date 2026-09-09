@@ -465,9 +465,12 @@ function pushLog(key, entry){
 // superset groups for a day, always normalised to arrays
 // each group is {keys:[...], reps:<string|null>}. Legacy groups were plain arrays.
 function normGroup(g){
-  if(Array.isArray(g)){ const keys=g.slice(); return {id:"g:"+keys.slice().sort().join("|"), keys, reps:null}; }
+  // a group shares SETS across its exercises; each keeps its own reps.
+  // legacy groups stored a full `reps` string — migrate its sets part.
+  if(Array.isArray(g)){ const keys=g.slice(); return {id:"g:"+keys.slice().sort().join("|"), keys, sets:null}; }
   const keys = Array.isArray(g.keys) ? g.keys.slice() : Object.values(g.keys || {});
-  return {id: g.id || ("g:"+keys.slice().sort().join("|")), keys, reps: g.reps || null};
+  const sets = (g.sets != null) ? g.sets : (g.reps ? splitSR(g.reps).sets : null);
+  return {id: g.id || ("g:"+keys.slice().sort().join("|")), keys, sets: sets || null};
 }
 function ssFor(dayKey){
   const v = SS[dayKey];
@@ -536,6 +539,20 @@ function fmtW(v){
   if(v==null || v==="") return "";
   v = String(v).trim();
   return /^\d+(\.\d+)?$/.test(v) ? v+" lbs" : v;
+}
+// split "4x6" -> {sets:"4", reps:"6"}; "3x to failure" -> {sets:"3", reps:"to failure"}
+function splitSR(str){
+  str = String(str==null?"":str).trim();
+  const i = str.toLowerCase().indexOf("x");
+  if(i < 0) return {sets:str, reps:""};
+  return {sets: str.slice(0,i).trim(), reps: str.slice(i+1).trim()};
+}
+// display reps for one exercise, applying its override and (if grouped) the group's shared sets
+function dispReps(dayKey, ex, groupSets){
+  const base = (repsFor(dayKey)[exKey(ex.name)] || ex.reps);
+  if(groupSets == null) return base;
+  const r = splitSR(base).reps;
+  return groupSets + "x" + r;
 }
 function exerciseCard(ex, opts){
   opts = opts || {};
@@ -642,23 +659,25 @@ function render(){
   if(mk) mk.onclick = ()=>{
     const keys = [...selSet];
     if(keys.length < 2) return;
+    const rov = repsFor(dayKey);
     const chosen = wk.ex.filter(e=>keys.includes(exKey(e.name)));
-    const finish = (reps)=>{
-      if(reps == null) return;                        // cancelled → don't group
+    const setsOf = e => splitSR(rov[exKey(e.name)] || e.reps).sets;
+    const finish = (sets)=>{
+      if(sets == null) return;                        // cancelled → don't group
       const arr = ssFor(dayKey)
-        .map(g=>({id:g.id, keys: g.keys.filter(k=>!keys.includes(k)), reps: g.reps}))
+        .map(g=>({id:g.id, keys: g.keys.filter(k=>!keys.includes(k)), sets: g.sets}))
         .filter(g=>g.keys.length >= 2);
-      arr.push({id:"g"+Date.now().toString(36)+Math.floor(Math.random()*1e4), keys, reps});
+      arr.push({id:"g"+Date.now().toString(36)+Math.floor(Math.random()*1e4), keys, sets});
       setSS(dayKey, arr); selSet.clear(); render();
     };
-    // one shared sets×reps for the group; if they differ, ask with a button per option
-    const distinct = [...new Set(chosen.map(e=>e.reps))];
-    if(distinct.length <= 1){ finish(chosen[0].reps); return; }
-    const choices = distinct.map(r=>({
-      value: r,
-      label: `<b>${r}</b><span class="choice-sub">${chosen.filter(e=>e.reps===r).map(e=>e.name).join(", ")}</span>`
+    // the group shares one SETS count (reps stay per-exercise); if they differ, ask
+    const distinct = [...new Set(chosen.map(setsOf))];
+    if(distinct.length <= 1){ finish(distinct[0]); return; }
+    const choices = distinct.map(s=>({
+      value: s,
+      label: `<b>${s} sets</b><span class="choice-sub">${chosen.filter(e=>setsOf(e)===s).map(e=>e.name).join(", ")}</span>`
     }));
-    choiceDialog("Sets × reps for this superset?", choices, finish);
+    choiceDialog("How many sets for this superset?", choices, finish);
   };
 
   // ---- build ordered items: each ungrouped exercise or superset = one item ----
@@ -710,18 +729,31 @@ function render(){
     };
     return sel;
   }
-  function editRepsEx(k, cur){
+  // edit an ungrouped exercise's full "sets × reps"
+  function editRepsFull(k, cur){
     const v = prompt("Sets × reps (blank to reset to default):", cur || "");
     if(v === null) return;
     const t = v.trim(), r = Object.assign({}, repsFor(dayKey));
     if(t) r[k] = t; else delete r[k];
     setReps(dayKey, r); render();
   }
-  function editRepsGroup(g){
-    const v = prompt("Sets × reps for this superset (blank = none):", g.reps || "");
+  // edit just the reps of one exercise inside a superset (sets come from the group)
+  function editRepsInGroup(ex){
+    const k = exKey(ex.name);
+    const base = repsFor(dayKey)[k] || ex.reps;
+    const cur = splitSR(base).reps;
+    const v = prompt("Reps for " + ex.name + " (sets are set by the superset):", cur || "");
+    if(v === null) return;
+    const t = v.trim(), r = Object.assign({}, repsFor(dayKey));
+    if(t) r[k] = splitSR(base).sets + "x" + t; else delete r[k];
+    setReps(dayKey, r); render();
+  }
+  // edit the shared sets for a whole superset
+  function editSetsGroup(g){
+    const v = prompt("Sets for this superset (applies to all in it):", g.sets || "");
     if(v === null) return;
     const t = v.trim();
-    const arr = ssFor(dayKey).map(x=> x.id===g.id ? {id:x.id, keys:x.keys, reps: t||null} : x);
+    const arr = ssFor(dayKey).map(x=> x.id===g.id ? {id:x.id, keys:x.keys, sets: t||null} : x);
     setSS(dayKey, arr); render();
   }
 
@@ -736,9 +768,9 @@ function render(){
       if(!editMode){ const s = orderSelect(num); s._itemId = g.id; label.appendChild(s); }
       const ttl = document.createElement("span"); ttl.className = "sslabel-txt"; ttl.textContent = "⛓ Superset";
       label.appendChild(ttl);
-      const rp = document.createElement("button"); rp.className = "repsedit"; rp.textContent = g.reps || "set reps";
-      rp.onclick = (e)=>{ e.stopPropagation(); editRepsGroup(g); };
-      label.appendChild(rp);
+      const st = document.createElement("button"); st.className = "repsedit"; st.textContent = (g.sets ? g.sets+" sets" : "set sets");
+      st.onclick = (e)=>{ e.stopPropagation(); editSetsGroup(g); };
+      label.appendChild(st);
       if(!editMode){
         const dn = document.createElement("button"); dn.className = "donebtn" + (gdone?" on":""); dn.textContent = gdone?"✓":"";
         dn.onclick = (e)=>{ e.stopPropagation(); toggleDone(dayKey, g.id); };
@@ -749,7 +781,10 @@ function render(){
         setSS(dayKey, ssFor(dayKey).filter(x=>x.id!==g.id)); render(); };
       label.appendChild(ung);
       box.appendChild(label);
-      it.members.forEach(m=> box.appendChild(exerciseCard(m, {showReps:false})));
+      it.members.forEach(m=> box.appendChild(exerciseCard(m, {
+        showReps: true, reps: dispReps(dayKey, m, g.sets),
+        onEditReps: ()=> editRepsInGroup(m)
+      })));
       main.appendChild(box);
     } else {
       const rv = repsOv[it.id] || it.ex.reps;
@@ -758,7 +793,7 @@ function render(){
       main.appendChild(exerciseCard(it.ex, {
         showReps: true, reps: rv, orderSel: sel,
         done: !!doneMap[it.id],
-        onEditReps: ()=> editRepsEx(it.id, rv),
+        onEditReps: ()=> editRepsFull(it.id, rv),
         onToggleDone: ()=> toggleDone(dayKey, it.id)
       }));
     }
