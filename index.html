@@ -73,7 +73,7 @@
     border:1px solid var(--accent); border-radius:14px;
     padding:6px; margin-bottom:8px; background:rgba(79,140,255,.05);
   }
-  .ssgroup .sslabel{font-size:10px; font-weight:700; color:var(--accent); letter-spacing:1px; text-transform:uppercase; margin:2px 4px 6px; display:flex; align-items:center; gap:8px;}
+  .ssgroup .sslabel{font-size:10px; font-weight:700; color:var(--accent); letter-spacing:1px; text-transform:uppercase; margin:2px 4px 6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
   .ssgroup .card{margin-bottom:6px;}
   .ssgroup .card:last-child{margin-bottom:0;}
   /* superset editing */
@@ -93,11 +93,33 @@
   .ssbar .ssmake{border:0; border-radius:10px; padding:11px 16px; font-size:14px; font-weight:700; cursor:pointer; background:var(--accent); color:#fff;}
   .ssbar .ssmake:disabled{opacity:.4; cursor:default;}
   /* compact exercise row */
-  .trow{display:flex; align-items:center; gap:8px; margin-bottom:4px;}
-  .extitle{flex:1; min-width:0; display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+  .trow{display:flex; align-items:center; gap:7px; margin-bottom:4px;}
+  .ordsel{flex:0 0 auto; background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; font-size:13px; font-weight:800; padding:5px 3px; cursor:pointer; text-transform:none;}
+  .extitle{flex:1; min-width:0; display:flex; align-items:center; gap:6px;
     background:transparent; border:0; color:var(--text); padding:0; cursor:pointer; text-align:left;}
-  .extitle .tnm{font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .extitle .trp{flex:0 0 auto; font-size:14px; font-weight:700; color:var(--text); white-space:nowrap;}
+  .extitle .tnm{flex:1; min-width:0; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .extitle .exicon{flex:0 0 auto; font-size:13px; opacity:.55;}
+  .repsedit{flex:0 0 auto; background:var(--chip); color:var(--text); border:1px solid var(--line); text-transform:none;
+    border-radius:7px; font-size:13px; font-weight:800; padding:4px 8px; cursor:pointer; white-space:nowrap;}
+  .repsedit:active{background:var(--panel2);}
+  .donebtn{flex:0 0 auto; width:28px; height:28px; border-radius:50%; border:2px solid var(--line);
+    background:transparent; color:#fff; font-size:15px; font-weight:900; cursor:pointer; line-height:1; padding:0;}
+  .donebtn.on{background:var(--accent2); border-color:var(--accent2);}
+  .card.done{opacity:.5;}
+  .card.done .tnm{text-decoration:line-through;}
+  .ssgroup.done{opacity:.6;}
+  .sslabel-txt{white-space:nowrap;}
+  .choice-card{max-width:400px;}
+  .choice-list{display:flex; flex-direction:column; gap:8px; margin:4px 0 14px;}
+  .choice-btn{width:100%; text-align:left; background:var(--panel2); color:var(--text);
+    border:1px solid var(--line); border-radius:11px; padding:12px 14px; cursor:pointer;
+    display:flex; flex-direction:column; gap:2px;}
+  .choice-btn:active{background:#232b39;}
+  .choice-btn b{font-size:16px;}
+  .choice-sub{font-size:12px; font-weight:500; color:var(--muted);}
+  .choice-cancel{width:100%; background:var(--chip); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:11px; font-size:14px; font-weight:700; cursor:pointer;}
   .boxes{display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;}
   .cell{display:flex; flex-direction:column; gap:1px;}
   .plab{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.3px; text-align:center;}
@@ -377,7 +399,10 @@ const firebaseConfig = {
 const USE_CLOUD = !!(firebaseConfig && firebaseConfig.apiKey);
 
 let LOGS = {};   // { exKey: { id: {person, weight, ts} } }
-let SS   = {};   // { "week-day": [ [key,key], ... ] }
+let SS   = {};   // { "week-day": [ {id,keys,reps}, ... ] }
+let ORDER = {};  // { "week-day": [ itemId, ... ] }
+let REPS = {};   // { "week-day": { exKey: "4x8" } }  reps overrides
+let DONE = {};   // { "week-day": { itemId: true } }  checked-off
 let db = null;
 
 function safeRender(){
@@ -389,16 +414,42 @@ function safeRender(){
 if(USE_CLOUD){
   firebase.initializeApp(firebaseConfig);
   db = firebase.database();
-  db.ref("logs").on("value",       s=>{ LOGS = s.val() || {}; safeRender(); });
-  db.ref("supersets").on("value",  s=>{ SS   = s.val() || {}; safeRender(); });
+  db.ref("logs").on("value",       s=>{ LOGS  = s.val() || {}; safeRender(); });
+  db.ref("supersets").on("value",  s=>{ SS    = s.val() || {}; safeRender(); });
+  db.ref("order").on("value",      s=>{ ORDER = s.val() || {}; safeRender(); });
+  db.ref("reps").on("value",       s=>{ REPS  = s.val() || {}; safeRender(); });
+  db.ref("done").on("value",       s=>{ DONE  = s.val() || {}; safeRender(); });
 } else {
-  try{ LOGS = JSON.parse(localStorage.getItem("workoutLogs_v1")) || {}; }catch(e){}
-  try{ SS   = JSON.parse(localStorage.getItem("workoutSupersets_v1")) || {}; }catch(e){}
+  try{ LOGS  = JSON.parse(localStorage.getItem("workoutLogs_v1")) || {}; }catch(e){}
+  try{ SS    = JSON.parse(localStorage.getItem("workoutSupersets_v1")) || {}; }catch(e){}
+  try{ ORDER = JSON.parse(localStorage.getItem("workoutOrder_v1")) || {}; }catch(e){}
+  try{ REPS  = JSON.parse(localStorage.getItem("workoutReps_v1")) || {}; }catch(e){}
+  try{ DONE  = JSON.parse(localStorage.getItem("workoutDone_v1")) || {}; }catch(e){}
 }
 function persistLocal(){
   if(USE_CLOUD) return;
   localStorage.setItem("workoutLogs_v1", JSON.stringify(LOGS));
   localStorage.setItem("workoutSupersets_v1", JSON.stringify(SS));
+  localStorage.setItem("workoutOrder_v1", JSON.stringify(ORDER));
+  localStorage.setItem("workoutReps_v1", JSON.stringify(REPS));
+  localStorage.setItem("workoutDone_v1", JSON.stringify(DONE));
+}
+function orderFor(dayKey){ const v = ORDER[dayKey]; return v ? (Array.isArray(v)?v:Object.values(v)) : []; }
+function setOrder(dayKey, arr){
+  if(USE_CLOUD){ db.ref("order/"+dayKey).set(arr); }
+  else { ORDER[dayKey] = arr; persistLocal(); render(); }
+}
+function repsFor(dayKey){ return REPS[dayKey] || {}; }
+function setReps(dayKey, obj){
+  if(USE_CLOUD){ db.ref("reps/"+dayKey).set(obj); }
+  else { REPS[dayKey] = obj; persistLocal(); render(); }
+}
+function doneFor(dayKey){ return DONE[dayKey] || {}; }
+function toggleDone(dayKey, itemId){
+  const d = Object.assign({}, doneFor(dayKey));
+  if(d[itemId]) delete d[itemId]; else d[itemId] = true;
+  if(USE_CLOUD){ db.ref("done/"+dayKey).set(d); }
+  else { DONE[dayKey] = d; persistLocal(); render(); }
 }
 
 // logs for one exercise, oldest→newest
@@ -414,9 +465,9 @@ function pushLog(key, entry){
 // superset groups for a day, always normalised to arrays
 // each group is {keys:[...], reps:<string|null>}. Legacy groups were plain arrays.
 function normGroup(g){
-  if(Array.isArray(g)) return {keys: g.slice(), reps: null};
+  if(Array.isArray(g)){ const keys=g.slice(); return {id:"g:"+keys.slice().sort().join("|"), keys, reps:null}; }
   const keys = Array.isArray(g.keys) ? g.keys.slice() : Object.values(g.keys || {});
-  return {keys, reps: g.reps || null};
+  return {id: g.id || ("g:"+keys.slice().sort().join("|")), keys, reps: g.reps || null};
 }
 function ssFor(dayKey){
   const v = SS[dayKey];
@@ -486,7 +537,8 @@ function fmtW(v){
   v = String(v).trim();
   return /^\d+(\.\d+)?$/.test(v) ? v+" lbs" : v;
 }
-function exerciseCard(ex, repsOverride){
+function exerciseCard(ex, opts){
+  opts = opts || {};
   const key = exKey(ex.name);
   const store = logsFor(key);
   const plan = parsePlan(ex.note);
@@ -494,9 +546,9 @@ function exerciseCard(ex, repsOverride){
   const lastOf = (p)=>{ for(let i=store.length-1;i>=0;i--){ if(store[i].person===p) return store[i].weight; } return null; };
 
   const card = document.createElement("div");
-  card.className = "card" + (editMode && selSet.has(key) ? " sel" : "");
+  card.className = "card" + (editMode && selSet.has(key) ? " sel" : "") + (opts.done ? " done" : "");
 
-  // title row: [＋ select] + title button (opens image) + reps
+  // title row: [＋ / number] + name(opens image) + reps(editable) + done
   const trow = document.createElement("div");
   trow.className = "trow";
   if(editMode){
@@ -504,16 +556,31 @@ function exerciseCard(ex, repsOverride){
     chk.className = "sscheck-inline" + (selSet.has(key)?" on":"");
     chk.textContent = selSet.has(key) ? "✓" : "+";
     trow.appendChild(chk);
+  } else if(opts.orderSel){
+    trow.appendChild(opts.orderSel);
   }
   const title = document.createElement("button");
   title.className = "extitle";
-  const extra = (repsOverride || ex.reps) + (plan.raw ? " · " + plan.raw : "");
-  title.innerHTML = `<span class="tnm">${ex.name}</span><span class="trp">${extra}&nbsp;🖼</span>`;
+  title.innerHTML = `<span class="tnm">${ex.name}</span><span class="exicon">🖼</span>`;
   title.onclick = ()=>{
     if(editMode){ selSet.has(key) ? selSet.delete(key) : selSet.add(key); render(); }
     else openImg(ex);
   };
   trow.appendChild(title);
+  if(opts.showReps){
+    const rp = document.createElement("button");
+    rp.className = "repsedit";
+    rp.textContent = (opts.reps || ex.reps) + (plan.raw ? " ·"+plan.raw : "");
+    rp.onclick = (e)=>{ e.stopPropagation(); if(opts.onEditReps) opts.onEditReps(); };
+    trow.appendChild(rp);
+  }
+  if(opts.onToggleDone && !editMode){
+    const dn = document.createElement("button");
+    dn.className = "donebtn" + (opts.done ? " on" : "");
+    dn.textContent = opts.done ? "✓" : "";
+    dn.onclick = (e)=>{ e.stopPropagation(); opts.onToggleDone(); };
+    trow.appendChild(dn);
+  }
   card.appendChild(trow);
 
   // 3 weight boxes side by side with colored name labels
@@ -576,59 +643,125 @@ function render(){
     const keys = [...selSet];
     if(keys.length < 2) return;
     const chosen = wk.ex.filter(e=>keys.includes(exKey(e.name)));
-    // the whole superset shares one sets×reps; ask which if they differ
-    let reps = chosen[0].reps;
+    const finish = (reps)=>{
+      if(reps == null) return;                        // cancelled → don't group
+      const arr = ssFor(dayKey)
+        .map(g=>({id:g.id, keys: g.keys.filter(k=>!keys.includes(k)), reps: g.reps}))
+        .filter(g=>g.keys.length >= 2);
+      arr.push({id:"g"+Date.now().toString(36)+Math.floor(Math.random()*1e4), keys, reps});
+      setSS(dayKey, arr); selSet.clear(); render();
+    };
+    // one shared sets×reps for the group; if they differ, ask with a button per option
     const distinct = [...new Set(chosen.map(e=>e.reps))];
-    if(distinct.length > 1){
-      let msg = "Which sets × reps should this superset use?\n";
-      chosen.forEach((e,i)=> msg += `\n${i+1}) ${e.name} — ${e.reps}`);
-      const ans = prompt(msg + "\n\nType a number:", "1");
-      if(ans === null) return;                        // cancelled → don't group
-      const idx = parseInt(ans, 10) - 1;
-      if(isNaN(idx) || idx < 0 || idx >= chosen.length) return;
-      reps = chosen[idx].reps;
-    }
-    const arr = ssFor(dayKey)
-      .map(g=>({keys: g.keys.filter(k=>!keys.includes(k)), reps: g.reps}))
-      .filter(g=>g.keys.length >= 2);
-    arr.push({keys, reps});
-    setSS(dayKey, arr); selSet.clear(); render();
+    if(distinct.length <= 1){ finish(chosen[0].reps); return; }
+    const choices = distinct.map(r=>({
+      value: r,
+      label: `<b>${r}</b><span class="choice-sub">${chosen.filter(e=>e.reps===r).map(e=>e.name).join(", ")}</span>`
+    }));
+    choiceDialog("Sets × reps for this superset?", choices, finish);
   };
 
-  // superset groups for this day: array of arrays of exercise keys
+  // ---- build ordered items: each ungrouped exercise or superset = one item ----
   const groups = ssFor(dayKey);
   const groupOf = {};
-  groups.forEach((g,gi)=> g.keys.forEach(k=> groupOf[k]=gi));
-  const done = {};
+  groups.forEach(g=> g.keys.forEach(k=> groupOf[k]=g.id));
+  const idxOf = {}; wk.ex.forEach((e,i)=> idxOf[exKey(e.name)] = i);
+  const repsOv = repsFor(dayKey);
+  const doneMap = doneFor(dayKey);
 
+  const items = [];
+  const seenG = {};
   wk.ex.forEach(ex=>{
-    const gi = groupOf[exKey(ex.name)];
-    if(gi!==undefined){
-      if(done[gi]) return;
-      done[gi] = true;
-      const g = groups[gi];
+    const k = exKey(ex.name);
+    const gid = groupOf[k];
+    if(gid){
+      if(seenG[gid]) return;
+      seenG[gid] = true;
+      const g = groups.find(x=>x.id===gid);
       const members = wk.ex.filter(e=>g.keys.includes(exKey(e.name)));
-      if(members.length < 2){ main.appendChild(exerciseCard(ex)); return; }
-      const box = document.createElement("div");
-      box.className = "ssgroup";
-      const repsTag = g.reps ? " · " + g.reps : "";
-      box.innerHTML = `<div class="sslabel"><span>⛓ Superset${repsTag}</span>`
-        + `<button class="ssungroup" data-gi="${gi}">Ungroup ✕</button></div>`;
-      members.forEach(m=> box.appendChild(exerciseCard(m, g.reps)));
-      main.appendChild(box);
+      if(members.length < 2){ items.push({id:k, kind:"ex", ex, pos:idxOf[k]}); return; }
+      const pos = Math.min.apply(null, members.map(m=>idxOf[exKey(m.name)]));
+      items.push({id:gid, kind:"group", g, members, pos});
     } else {
-      main.appendChild(exerciseCard(ex));
+      items.push({id:k, kind:"ex", ex, pos:idxOf[k]});
     }
   });
+  // apply saved custom order (anything unknown falls back to its default spot)
+  const saved = orderFor(dayKey);
+  const rank = {}; saved.forEach((id,i)=> rank[id]=i);
+  items.sort((a,b)=>{
+    const ra = (a.id in rank) ? rank[a.id] : 1e6 + a.pos;
+    const rb = (b.id in rank) ? rank[b.id] : 1e6 + b.pos;
+    return ra - rb;
+  });
+  const orderedIds = items.map(it=>it.id);
+  const total = items.length;
 
-  // ungroup
-  main.querySelectorAll(".ssungroup").forEach(b=>{
-    b.onclick = (e)=>{
-      e.stopPropagation();
-      if(!confirm("Break up this superset?")) return;
-      const arr = ssFor(dayKey);
-      arr.splice(+b.dataset.gi, 1); setSS(dayKey, arr); render();
+  function orderSelect(num){
+    const sel = document.createElement("select");
+    sel.className = "ordsel";
+    for(let i=1;i<=total;i++){ const o=document.createElement("option"); o.value=String(i); o.textContent=String(i); if(i===num) o.selected=true; sel.appendChild(o); }
+    sel.onclick = e=> e.stopPropagation();
+    sel.onchange = ()=>{
+      const ids = orderedIds.slice(), from = ids.indexOf(sel._itemId);
+      if(from < 0) return;
+      ids.splice(from,1); ids.splice((+sel.value)-1, 0, sel._itemId);
+      setOrder(dayKey, ids); render();
     };
+    return sel;
+  }
+  function editRepsEx(k, cur){
+    const v = prompt("Sets × reps (blank to reset to default):", cur || "");
+    if(v === null) return;
+    const t = v.trim(), r = Object.assign({}, repsFor(dayKey));
+    if(t) r[k] = t; else delete r[k];
+    setReps(dayKey, r); render();
+  }
+  function editRepsGroup(g){
+    const v = prompt("Sets × reps for this superset (blank = none):", g.reps || "");
+    if(v === null) return;
+    const t = v.trim();
+    const arr = ssFor(dayKey).map(x=> x.id===g.id ? {id:x.id, keys:x.keys, reps: t||null} : x);
+    setSS(dayKey, arr); render();
+  }
+
+  items.forEach((it, i)=>{
+    const num = i + 1;
+    if(it.kind === "group"){
+      const g = it.g, gdone = !!doneMap[g.id];
+      const box = document.createElement("div");
+      box.className = "ssgroup" + (gdone ? " done" : "");
+      const label = document.createElement("div");
+      label.className = "sslabel";
+      if(!editMode){ const s = orderSelect(num); s._itemId = g.id; label.appendChild(s); }
+      const ttl = document.createElement("span"); ttl.className = "sslabel-txt"; ttl.textContent = "⛓ Superset";
+      label.appendChild(ttl);
+      const rp = document.createElement("button"); rp.className = "repsedit"; rp.textContent = g.reps || "set reps";
+      rp.onclick = (e)=>{ e.stopPropagation(); editRepsGroup(g); };
+      label.appendChild(rp);
+      if(!editMode){
+        const dn = document.createElement("button"); dn.className = "donebtn" + (gdone?" on":""); dn.textContent = gdone?"✓":"";
+        dn.onclick = (e)=>{ e.stopPropagation(); toggleDone(dayKey, g.id); };
+        label.appendChild(dn);
+      }
+      const ung = document.createElement("button"); ung.className = "ssungroup"; ung.textContent = "Ungroup ✕";
+      ung.onclick = (e)=>{ e.stopPropagation(); if(!confirm("Break up this superset?")) return;
+        setSS(dayKey, ssFor(dayKey).filter(x=>x.id!==g.id)); render(); };
+      label.appendChild(ung);
+      box.appendChild(label);
+      it.members.forEach(m=> box.appendChild(exerciseCard(m, {showReps:false})));
+      main.appendChild(box);
+    } else {
+      const rv = repsOv[it.id] || it.ex.reps;
+      let sel = null;
+      if(!editMode){ sel = orderSelect(num); sel._itemId = it.id; }
+      main.appendChild(exerciseCard(it.ex, {
+        showReps: true, reps: rv, orderSel: sel,
+        done: !!doneMap[it.id],
+        onEditReps: ()=> editRepsEx(it.id, rv),
+        onToggleDone: ()=> toggleDone(dayKey, it.id)
+      }));
+    }
   });
 
   if(!editMode) window.scrollTo({top:0, behavior:"instant"});
@@ -650,6 +783,32 @@ function openImg(ex){
   document.getElementById("imgModal").hidden = false;
 }
 function closeImg(){ document.getElementById("imgModal").hidden = true; }
+
+/* ---------- choice dialog (one button per option) ---------- */
+function choiceDialog(title, choices, onPick){
+  let settled = false;
+  const ov = document.createElement("div");
+  ov.className = "modal";
+  ov.innerHTML =
+    `<div class="modal-backdrop"></div>
+     <div class="modal-card choice-card">
+       <div class="modal-title">${title}</div>
+       <div class="choice-list"></div>
+       <button class="choice-cancel">Cancel</button>
+     </div>`;
+  const done = (val)=>{ if(settled) return; settled = true; if(ov.parentNode) ov.parentNode.removeChild(ov); onPick(val); };
+  const list = ov.querySelector(".choice-list");
+  choices.forEach(c=>{
+    const b = document.createElement("button");
+    b.className = "choice-btn";
+    b.innerHTML = c.label;
+    b.onclick = ()=> done(c.value);
+    list.appendChild(b);
+  });
+  ov.querySelector(".choice-cancel").onclick = ()=> done(null);
+  ov.querySelector(".modal-backdrop").onclick = ()=> done(null);
+  document.body.appendChild(ov);
+}
 
 /* ---------- init ---------- */
 document.querySelectorAll("#weekToggle button").forEach(b=>{
