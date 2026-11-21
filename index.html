@@ -144,7 +144,9 @@
   .fpair .wbox::placeholder{color:#7f8aa0; font-weight:600;}
   .wbox.need{border-color:var(--danger) !important;}
   .plab.tap{cursor:pointer;}
-  .wsub{font-size:10.5px; color:var(--muted); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:14px;}
+  .wsub, .wlast{font-size:10.5px; color:var(--muted); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .wsub{min-height:14px;}
+  .wlast:empty{display:none;}
   .wsub.then{color:var(--accent2); font-weight:700;}
   .wsub.need{color:#ff8a94; font-weight:700;}
   .rulebtn{flex:0 0 auto; width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:var(--chip);
@@ -440,18 +442,19 @@ const RULES = {
   spot:    {icon:"⚠",  label:"To failure with a spotter", help:"Only go to failure with a spotter or safety bars. No spotter? Stop 1 rep short."},
   none:    {icon:"–",  label:"No failure",                help:"Stop every set with 1–2 good reps left."}
 };
-const EQUIP = {db:"Dumbbells", bar:"Barbell / plates", machine:"Machine / cable", bw:"Bodyweight + added weight"};
+const EQUIP = {db:"Dumbbells", bar:"Barbell / plates", fixed:"Fixed bar", machine:"Machine / cable", bw:"Bodyweight + added weight"};
 const EX_DEFAULTS = {};
 function setDefaults(rule, eq, names){ names.forEach(n=> EX_DEFAULTS[exKey(n)] = Object.assign({rule}, eq)); }
 const DBELL = {equip:"db"}, MACH = {equip:"machine"}, BODY = {equip:"bw"};
-const BAR45 = {equip:"bar", bar:45, sides:2}, BAR20 = {equip:"bar", bar:20, sides:2};
+const BAR45 = {equip:"bar", bar:45, sides:2};
+const FIXED = {equip:"fixed"};   // one-piece EZ or straight bar: 10, 20, 30 … 200
 const PLATES2 = {equip:"bar", bar:0, sides:2}, PLATES1 = {equip:"bar", bar:0, sides:1};
 setDefaults("fail", DBELL, ["Incline Dumbbell Press","Dumbbell Arnold Press","Hammer Curl (Dumbbell)",
   "Dumbbell Fly Flat","Dumbbell Fly Incline","Dumbbell Fly Decline","Dumbbell Front Raise","Dumbbell Lateral Raise",
   "Seated Arnold Press (light)","Single Arm Dumbbell Row","Incline Dumbbell Curl","Concentration Curl",
   "Reverse Dumbbell Curl","Dumbbell Bench Press","Seated Dumbbell Shoulder Press","Farmer Carry"]);
-setDefaults("fail", BAR45, ["Barbell Upright Row","Barbell Curl"]);
-setDefaults("fail", BAR20, ["Barbell Wrist Curl","EZ Bar Curl","Barbell Hammer Curl","Reverse Grip Curl","EZ Bar Overhead Extension"]);
+setDefaults("fail", BAR45, ["Barbell Upright Row"]);
+setDefaults("fail", FIXED, ["Barbell Curl","Barbell Wrist Curl","EZ Bar Curl","Barbell Hammer Curl","Reverse Grip Curl","EZ Bar Overhead Extension"]);
 setDefaults("fail", PLATES2, ["Leg Press"]);
 setDefaults("fail", PLATES1, ["Landmine Press"]);
 setDefaults("fail", MACH, ["Leg Extension","Leg Curl","Standing Calf Raise","Seated Calf Raise","Rope Pushdowns",
@@ -462,12 +465,20 @@ setDefaults("fail", BODY, ["Weighted Dips","Pull Ups","Weighted Chin Ups"]);
 setDefaults("failall", BODY, ["Hanging Leg Raise"]);
 setDefaults("failall", MACH, ["Weighted Cable Crunch","Weighted Cable Twist"]);
 setDefaults("spot", BAR45, ["Barbell Bench Press","Decline Barbell Press","Close Grip Bench Press","Barbell Incline Press"]);
-setDefaults("spot", BAR20, ["JM Press","EZ Bar Skull Crushers"]);
+setDefaults("spot", FIXED, ["JM Press","EZ Bar Skull Crushers"]);
 setDefaults("none", BAR45, ["Standing Barbell Overhead Press","Deadlift","Barbell Bent Over Row","Back Squat",
   "Romanian Deadlift","Front Squat","Good Morning"]);
 setDefaults("none", PLATES1, ["T Bar Row"]);
 setDefaults("none", DBELL, ["Bulgarian Split Squat"]);
-function metaFor(key){ return Object.assign({rule:"none", equip:"machine"}, EX_DEFAULTS[key] || {}, (STATE.exmeta || {})[key] || {}); }
+function metaFor(key){
+  const base = Object.assign({rule:"none", equip:"machine"}, EX_DEFAULTS[key] || {});
+  const over = (STATE.exmeta || {})[key] || {};
+  const m = Object.assign({}, base, over);
+  // Older saves stored the plate-bar default on fixed-bar exercises. Keep the
+  // saved failure rule, but round those bars as fixed bars. Nothing is written back.
+  if(base.equip === "fixed" && m.equip === "bar") m.equip = "fixed";
+  return m;
+}
 // the 🔥 On/Off button at the top of the day: failure sets for every exercise at once
 function failureOn(){ return (STATE.settings || {}).failure !== false; }
 
@@ -488,7 +499,7 @@ const firebaseConfig = {
 };
 const CLOUD = !!(firebaseConfig && firebaseConfig.apiKey);
 const FB_OK = CLOUD && typeof firebase !== "undefined";   // false if the app opened with no signal and no saved copy of Firebase
-const CACHE_KEY = "wt2_cache", OUTBOX_KEY = "wt2_outbox";
+const CACHE_KEY = "wt2_cache", OUTBOX_KEY = "wt2_outbox", DRAFT_KEY = "wt2_drafts";
 const SSDAY = {1:"mon", 2:"tue", 3:"wed", 4:"thu", 5:"fri"};   // supersets are saved per weekday, shared by both weeks
 
 let STATE = {
@@ -501,7 +512,9 @@ let STATE = {
   settings:{} // { failure: false }  failure sets switched off for every exercise
 };
 let OUTBOX = [];
+let DRAFTS = {};   // { "YYYY-MM-DD": { exKey: { person: {w, r} } } }  typed text, this phone only
 let CONNECTED = false, SYNC_ERROR = null, db = null;
+let flushing = false, flushDelay = null;
 const STARTED = Date.now();
 
 function loadJSON(k){ try{ return JSON.parse(localStorage.getItem(k)); }catch(e){ return null; } }
@@ -528,18 +541,38 @@ function write(path, value){
     const item = {id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), ts: Date.now(), path, value: clone(value)};
     OUTBOX.push(item);
     saveJSON(OUTBOX_KEY, OUTBOX);
-    sendItem(item);
-    setTimeout(updateSync, 3200);
+    queueFlush(400);   // wait a beat so a weight typed as 6 then 65 uploads once
+    const syncT = setTimeout(updateSync, 3200);
+    if(syncT.unref) syncT.unref();
   }
   updateSync();
 }
-function sendItem(item){
-  if(!db) return;
+// upload waiting changes, oldest first, one at a time. Safe to call again:
+// a finished upload is removed, a failed one stays and is tried later.
+function queueFlush(ms){
+  if(flushing || flushDelay) return;
+  flushDelay = setTimeout(()=>{ flushDelay = null; flushOutbox(); }, ms == null ? 400 : ms);
+  if(flushDelay.unref) flushDelay.unref();
+}
+function flushOutbox(){
+  if(flushDelay){ clearTimeout(flushDelay); flushDelay = null; }
+  if(!db || flushing) return;
+  if(!CONNECTED || !OUTBOX.length){ updateSync(); return; }
+  flushing = true;
+  const item = OUTBOX[0];
   db.ref(item.path).set(item.value).then(()=>{
     OUTBOX = OUTBOX.filter(it=> it.id !== item.id);
     saveJSON(OUTBOX_KEY, OUTBOX);
-    SYNC_ERROR = null; updateSync();
-  }).catch(err=>{ SYNC_ERROR = (err && (err.code || err.message)) || "error"; updateSync(); });
+    SYNC_ERROR = null;
+    flushing = false;
+    updateSync();
+    flushOutbox();
+  }).catch(err=>{
+    flushing = false;
+    SYNC_ERROR = (err && (err.code || err.message)) || "error";
+    updateSync();
+    queueFlush(4000);
+  });
 }
 // changes still waiting to upload win over what the server sent
 function overlayOutbox(top){ OUTBOX.forEach(it=>{ if(it.path.split("/")[0] === top) setIn(STATE, it.path, it.value); }); }
@@ -589,16 +622,44 @@ function importLocalV1(){
   STATE.ss2 = convertOldSS(oldSS && Object.keys(oldSS).length ? oldSS : DEFAULT_SS);
   saveCache();
 }
+// weight/reps text typed today, so a redraw (the other person logging) can't wipe it
+function loadDrafts(){
+  const all = loadJSON(DRAFT_KEY);
+  const t = todayStr();
+  const day = all && typeof all === "object" && all[t] && typeof all[t] === "object" ? all[t] : {};
+  DRAFTS = {[t]: day};
+  saveJSON(DRAFT_KEY, DRAFTS);
+}
+function draftFor(key, p){
+  const day = DRAFTS[todayStr()] || {};
+  return (day[key] && day[key][p]) || null;
+}
+function setDraft(key, p, patch){
+  const t = todayStr();
+  DRAFTS = {[t]: Object.assign({}, DRAFTS[t])};
+  const day = DRAFTS[t];
+  day[key] = Object.assign({}, day[key]);
+  const cur = Object.assign({w:"", r:""}, day[key][p], patch);
+  cur.w = cur.w == null ? "" : String(cur.w);
+  cur.r = cur.r == null ? "" : String(cur.r);
+  if(!cur.w && !cur.r) delete day[key][p];
+  else day[key][p] = {w: cur.w, r: cur.r};
+  if(!Object.keys(day[key]).length) delete day[key];
+  saveJSON(DRAFT_KEY, DRAFTS);
+}
+function clearDraft(key, p){ setDraft(key, p, {w:"", r:""}); }
 // start from what's saved on this phone, so the app works right away (even with no signal)
-(function initState(){
+function loadPersisted(){
   const c = loadJSON(CACHE_KEY);
   if(c && typeof c === "object") Object.keys(STATE).forEach(k=>{ if(c[k] && typeof c[k] === "object") STATE[k] = c[k]; });
   const o = loadJSON(OUTBOX_KEY);
-  if(Array.isArray(o)) OUTBOX = o;
+  OUTBOX = Array.isArray(o) ? o.slice() : [];
   const t = todayStr();
   STATE.done2 = {[t]: (STATE.done2 || {})[t] || {}};
   if(!CLOUD && !c) importLocalV1();
-})();
+  loadDrafts();
+}
+loadPersisted();
 
 function orderFor(dayKey){ const v = STATE.order[dayKey]; return v ? (Array.isArray(v) ? v : Object.values(v)) : []; }
 function repsFor(dayKey){ return STATE.reps[dayKey] || {}; }
@@ -611,7 +672,26 @@ function logsFor(key){
   return Object.keys(o).filter(id=> o[id] && o[id].person).map(id=> Object.assign({id}, o[id])).sort((a,b)=> a.ts - b.ts);
 }
 function newLogId(key){ return db ? db.ref("logs/" + key).push().key : "l" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
-function pushLog(key, entry){ write("logs/" + key + "/" + newLogId(key), entry); }
+function pushLog(key, entry){ const id = newLogId(key); write("logs/" + key + "/" + id, entry); return id; }
+// one entry per person per exercise for today. A newer edit updates it in place
+// so a retry or a second keystroke can't create a duplicate on the server.
+function upsertPersonLog(key, person, fields){
+  const today = logsFor(key).filter(e=> e.person === person && isToday(e.ts)).pop() || null;
+  const id = today ? today.id : newLogId(key);
+  const entry = {person, ts: (today && today.ts) || Date.now()};
+  entry.weight = fields.weight != null ? fields.weight : (today ? today.weight : "");
+  if(fields.reps > 0){
+    entry.reps = fields.reps;
+    if(fields.tgt != null) entry.tgt = fields.tgt;
+    if(fields.exp != null) entry.exp = fields.exp;
+  } else if(!fields.dropReps && today && +today.reps > 0){
+    entry.reps = today.reps;
+    if(today.tgt != null) entry.tgt = today.tgt;
+    if(today.exp != null && fields.exp == null) entry.exp = today.exp;
+  }
+  write("logs/" + key + "/" + id, entry);
+  return Object.assign({id}, entry);
+}
 // superset groups: each group is {id, keys:[...], sets}. Legacy groups were plain arrays.
 function normGroup(g){
   // a group shares SETS across its exercises; each keeps its own reps.
@@ -676,6 +756,23 @@ function fmtDate(ts){
   if(days<7) return days+"d ago";
   return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
 }
+// "65 × 6, Nov 7" under a box, so a weight logged last time is still visible
+function formatLogLine(e, isBW){
+  if(!e) return "";
+  const raw = String(e.weight == null ? "" : e.weight).trim();
+  const w = num(e.weight);
+  let wTxt;
+  if(isBW && !(w > 0)) wTxt = "BW";
+  else if(/^\d+(\.\d+)?$/.test(raw)) wTxt = fmtNum(w);
+  else wTxt = raw;
+  const when = e.ts ? fmtDate(e.ts) : "";
+  const main = (+e.reps > 0) ? (wTxt + " × " + e.reps) : wTxt;
+  return when ? main + ", " + when : main;
+}
+function lastLogEntry(key, p){
+  const all = logsFor(key).filter(e=> e.person === p);
+  return all.length ? all[all.length - 1] : null;
+}
 // show a plain number as "135 lbs"; leave non-numeric notes (bar, 2x 35lbs) alone
 function fmtW(v){
   if(v==null || v==="") return "";
@@ -718,11 +815,20 @@ function epley(w, r){ return w * (1 + r / 30); }
 function wAt(S, T){ return S / (1 + T / 30); }
 function repsAt(S, w){ return w > 0 ? 30 * (S / w - 1) : 0; }
 
-// real weights you can load for an exercise
-const DB_WEIGHTS = (()=>{ const a = []; for(let w = 5; w <= 30; w += 2.5) a.push(w); for(let w = 35; w <= 250; w += 5) a.push(w); return a; })();
+// real weights at this gym.
+// Dumbbells: 2.5 lb steps through 30, then 5 lb steps through 210.
+// Fixed EZ and straight bars: 10 lb steps from 10 through 200.
+const DB_WEIGHTS = (()=>{
+  const a = [];
+  for(let w = 2.5; w <= 30 + 1e-9; w += 2.5) a.push(Math.round(w * 10) / 10);
+  for(let w = 35; w <= 210; w += 5) a.push(w);
+  return a;
+})();
+const FIXED_WEIGHTS = (()=>{ const a = []; for(let w = 10; w <= 200; w += 10) a.push(w); return a; })();
 function weightList(key){
   const m = metaFor(key);
   if(m.equip === "db") return DB_WEIGHTS;
+  if(m.equip === "fixed") return FIXED_WEIGHTS;
   if(m.equip === "bw"){ const a = []; for(let w = 0; w <= 300; w += 5) a.push(w); return a; }
   if(m.equip === "bar"){
     // plates are mostly 45s, 25s and 10s — that makes every 5 lbs per side from 20 up
@@ -737,9 +843,13 @@ function weightList(key){
   }
   return null;   // a machine we haven't been told about — learn from the numbers people type
 }
-function learnedList(key){
+function learnedList(key, person){
   const s = new Set();
-  logsFor(key).forEach(e=>{ const w = num(e.weight); if(w > 0) s.add(w); });
+  logsFor(key).forEach(e=>{
+    if(person && e.person !== person) return;
+    const w = num(e.weight);
+    if(w > 0) s.add(w);
+  });
   return [...s].sort((a, b)=> a - b);
 }
 function round25(x){ return Math.round(x / 2.5) * 2.5; }
@@ -755,7 +865,7 @@ function pickWeight(key, x, opt){
   const cap = opt.max != null ? opt.max + 1e-9 : Infinity;
   const list = weightList(key);
   if(!list){
-    const learned = learnedList(key).filter(v=> v <= cap);
+    const learned = learnedList(key, opt.person).filter(v=> v <= cap);
     let best = null;
     learned.forEach(v=>{ if(best == null || Math.abs(v - x) < Math.abs(best - x)) best = v; });
     if(opt.up && opt.S){
@@ -783,16 +893,27 @@ function bwOf(p){ const v = num(((STATE.settings || {}).bw || {})[p]); return v 
 // weight for the rest of today's sets after set 1 (W × R) — one weight for all of them
 function backoffFor(ex, W, R, T, p){
   const key = exKey(ex.name), m = metaFor(key), bw = (m.equip === "bw" && p) ? bwOf(p) : 0;
-  if(m.equip === "bw" && !bw) return W > 0 ? pickWeight(key, W * 0.85) : {w: 0};   // body weight unknown: 85% of the added weight
+  if(m.equip === "bw" && !bw) return W > 0 ? pickWeight(key, W * 0.85, {person: p}) : {w: 0};   // body weight unknown: 85% of the added weight
   const load = W + bw;
   const ideal = 0.85 * wAt(epley(load, R), T);
   if(bw && ideal <= bw) return {w: 0, bwOnly: true};        // lighter than you weigh — drop the added weight
-  return pickWeight(key, ideal, {base: bw});
+  return pickWeight(key, ideal, {base: bw, person: p});
 }
 // the reps the app expected you to get at this weight, from your last failure set
 function expectedReps(ex, p, w, T, skipId){
   const key = exKey(ex.name), bw = metaFor(key).equip === "bw" ? bwOf(p) : 0;
-  const fails = logsFor(key).filter(e=> e.person === p && +e.reps > 0 && e.id !== skipId);
+  let fails = logsFor(key).filter(e=> e.person === p && +e.reps > 0 && e.id !== skipId);
+  // Expectation comes from the last set at this rep target. A Week 2 set of 8
+  // must not make a Week 1 set of 6 look like a miss.
+  if(T > 0){
+    const same = fails.filter(e=> +e.tgt > 0 && Math.abs(+e.tgt - T) < 0.01);
+    if(same.length) fails = same;
+    else {
+      const untagged = fails.filter(e=> !(+e.tgt > 0));
+      if(!untagged.length) return null;
+      fails = untagged;
+    }
+  }
   const prev = fails[fails.length - 1];
   if(!prev) return null;
   if(metaFor(key).equip === "bw" && !bw) return null;
@@ -801,56 +922,78 @@ function expectedReps(ex, p, w, T, skipId){
   return (r > 0 && r < 200) ? Math.round(r * 10) / 10 : null;
 }
 const WHY = {
-  start:  "First failure set: your old weight counts as your 85% weight, so this is your starting guess.",
+  start:  "Starting from the weight already logged for this exercise.",
   on:     "You got what the app expected last time, so same weight.",
+  kept:   "Same weight you logged last time.",
   up:     "You beat what the app expected last time, so go up.",
   reps:   "The next weight up would cost you more than a rep, so same weight and go for more reps.",
   hold:   "A little short last time, so same weight once more.",
   down:   "Short of what the app expected, so a bit lighter.",
   target: "You changed the target reps, so the weight changed to match."
 };
-const WHY_SHORT = {start:"", on:"(same weight)", up:"(go up)", reps:"(push for more reps)", hold:"(same weight once more)", down:"(lighter)", target:""};
+const WHY_SHORT = {start:"", on:"(same weight)", kept:"(your last weight)", up:"(go up)", reps:"(push for more reps)", hold:"(same weight once more)", down:"(lighter)", target:""};
 // next "try" weight for one person. extra = a set about to be saved (for the live preview).
 function suggestFor(ex, p, T, extra){
   const key = exKey(ex.name), m = metaFor(key);
   let entries = logsFor(key).filter(e=> e.person === p);
   if(extra) entries = entries.concat([extra]);
+  const lastEntry = entries[entries.length - 1];
+  // The newest log is often just a weight (no reps yet). That number is what they
+  // lifted — use it as-is, don't turn it into a heavier "85%" guess.
+  if(lastEntry && !(+lastEntry.reps > 0) && num(lastEntry.weight) >= 0){
+    const w = num(lastEntry.weight);
+    if(m.equip === "bw") return {w, why: "kept"};
+    if(!(w > 0)) return null;
+    return {w, why: "kept"};
+  }
   const fails = entries.filter(e=> +e.reps > 0 && num(e.weight) >= 0);
-  const last = fails[fails.length - 1];
+  const sameT = (e)=> T > 0 && +e.tgt > 0 && Math.abs(+e.tgt - T) < 0.01;
+  const same = fails.filter(sameT);
+  const untagged = fails.filter(e=> !(+e.tgt > 0));
+  // Week 1 and Week 2 share an exercise but often not the rep target (4x6 vs 3x8).
+  // Compare with the last set that had THIS target so rounding can't walk the
+  // weight down every time the weeks swap.
+  const pool = same.length ? same : untagged;
+  const last = pool.length ? pool[pool.length - 1] : null;
   if(!last){
-    // first time: treat the last weight you logged as your 85% weight
-    const lastAny = entries[entries.length - 1];
-    let base = lastAny ? num(lastAny.weight) : NaN;
-    if(!(base >= 0) && m.equip !== "bw") base = num(parsePlan(ex.note).people[p]);
+    const cross = fails.length ? fails[fails.length - 1] : null;
+    if(cross && T > 0 && +cross.tgt > 0 && Math.abs(+cross.tgt - T) >= 0.01) return fromSet(cross, fails, true);
+    let base = NaN;
+    if(m.equip !== "bw") base = num(parsePlan(ex.note).people[p]);
     if(!(base >= 0)) return null;
     if(m.equip === "bw") return {w: base, why: "start"};
     if(!(base > 0)) return null;
-    return Object.assign(pickWeight(key, base / 0.85), {why: "start"});
+    return Object.assign(pickWeight(key, base, {person: p}), {why: "start"});
   }
-  const W = num(last.weight), R = +last.reps, tgt = +last.tgt || T;
-  const bw = m.equip === "bw" ? bwOf(p) : 0;
-  // judge against what the app expected at that weight, not the plan's target —
-  // with big jumps (light dumbbells, pull-ups) the two aren't the same
-  const aimed = (+last.exp > 0 && Math.abs(tgt - T) < 0.01) ? +last.exp : tgt;
-  const diff = R - aimed;
-  const prev = fails[fails.length - 2];
-  const prevShort = !!prev && (+prev.reps <= (+prev.exp > 0 ? +prev.exp : (+prev.tgt || T)) - 2) && Math.abs(num(prev.weight) - W) < 0.01;
-  if(m.equip === "bw" && !bw){   // body weight unknown: simple steps of 5
-    if(diff >= 2) return {w: W + 5, why: "up"};
-    if(diff <= -4 || (diff <= -2 && prevShort)) return {w: Math.max(0, W - 5), why: "down"};
-    return {w: W, why: diff <= -2 ? "hold" : "on"};
+  return fromSet(last, pool, false);
+
+  function fromSet(src, series, targetChanged){
+    const W = num(src.weight), R = +src.reps, tgt = +src.tgt || T;
+    const bw = m.equip === "bw" ? bwOf(p) : 0;
+    // judge against what the app expected at that weight, not the plan's target —
+    // with big jumps (light dumbbells, pull-ups) the two aren't the same
+    const aimed = (+src.exp > 0 && Math.abs(tgt - T) < 0.01) ? +src.exp : tgt;
+    const diff = R - aimed;
+    const prev = series[series.length - 2];
+    const prevShort = !!prev && (+prev.reps <= (+prev.exp > 0 ? +prev.exp : (+prev.tgt || T)) - 2) && Math.abs(num(prev.weight) - W) < 0.01;
+    if(m.equip === "bw" && !bw){   // body weight unknown: simple steps of 5
+      if(targetChanged) return {w: W, why: "target"};
+      if(diff >= 2) return {w: W + 5, why: "up"};
+      if(diff <= -4 || (diff <= -2 && prevShort)) return {w: Math.max(0, W - 5), why: "down"};
+      return {w: W, why: diff <= -2 ? "hold" : "on"};
+    }
+    const S = epley(W + bw, R), ideal = wAt(S, T);
+    const pick = extraOpt => pickWeight(key, ideal, Object.assign({up: true, S, T, base: bw, person: p}, extraOpt || {}));
+    if(targetChanged || Math.abs(tgt - T) > 0.01) return Object.assign(pick(), {why: "target", S, bw});
+    if(diff > -2 && diff < 2) return {w: W, why: "on", S, bw};
+    if(diff >= 2){
+      const s = pick();
+      if(!(s.w > W + 1e-9)) return {w: W, why: "reps", S, bw};
+      return Object.assign(s, {why: "up", S, bw});
+    }
+    if(diff > -4 && !prevShort) return {w: W, why: "hold", S, bw};
+    return Object.assign(pick({max: W + bw}), {why: "down", S, bw});
   }
-  const S = epley(W + bw, R), ideal = wAt(S, T);
-  const pick = extraOpt => pickWeight(key, ideal, Object.assign({up: true, S, T, base: bw}, extraOpt || {}));
-  if(Math.abs(tgt - T) > 0.01) return Object.assign(pick(), {why: "target", S, bw});
-  if(diff > -2 && diff < 2) return {w: W, why: "on", S, bw};
-  if(diff >= 2){
-    const s = pick();
-    if(!(s.w > W + 1e-9)) return {w: W, why: "reps", S, bw};
-    return Object.assign(s, {why: "up", S, bw});
-  }
-  if(diff > -4 && !prevShort) return {w: W, why: "hold", S, bw};
-  return Object.assign(pick({max: W + bw}), {why: "down", S, bw});
 }
 // how to load a barbell: "bar + 25 + 10 each side" (uses 45s, 25s and 10s before any 5s)
 function platesFor(p){
@@ -915,23 +1058,33 @@ function updateSync(){
    The line under it is the weight for the rest of the sets, worked out from set 1. */
 function failCell(ex, p, tgt, repsLabel, cell){
   const key = exKey(ex.name), isBW = metaFor(key).equip === "bw";
-  let today = logsFor(key).filter(e=> e.person === p && +e.reps > 0 && isToday(e.ts)).pop() || null;
-  const sug = today ? null : suggestFor(ex, p, tgt.T);
+  // today's log counts even when only the weight was entered
+  let today = logsFor(key).filter(e=> e.person === p && isToday(e.ts)).pop() || null;
+  const draft = draftFor(key, p);
+  const sug = (today || (draft && draft.w)) ? null : suggestFor(ex, p, tgt.T);
   const range = /^\d+\s*[–-]\s*\d+/.exec(splitSR(repsLabel).reps);
   const loadTxt = w=> (isBW && !(w > 0)) ? "BW" : fmtNum(w);
+  const wShown = (draft && draft.w) ? draft.w : (today ? loadTxt(num(today.weight)) : "");
+  const rShown = (draft && draft.r) ? draft.r : (today && +today.reps > 0 ? String(today.reps) : "");
   cell.innerHTML =
     `<label class="plab tap ${p}">${PEOPLE[p]}</label>
      <div class="fpair">
        <input class="wbox fw" inputmode="decimal" aria-label="${PEOPLE[p]} set 1 weight"
-         value="${today ? esc(loadTxt(num(today.weight))) : ""}" placeholder="${sug ? (sug.approx ? "~" : "") + loadTxt(sug.w) : "lbs"}">
+         value="${esc(wShown)}" placeholder="${sug ? (sug.approx ? "~" : "") + loadTxt(sug.w) : "lbs"}">
        <span class="fx">×</span>
        <input class="wbox fr" inputmode="numeric" aria-label="${PEOPLE[p]} set 1 reps"
-         value="${today ? today.reps : ""}" placeholder="${range ? range[0].replace(/\s/g, "") : fmtNum(tgt.T)}">
+         value="${esc(rShown)}" placeholder="${range ? range[0].replace(/\s/g, "") : fmtNum(tgt.T)}">
      </div>
-     <div class="wsub"></div>`;
+     <div class="wsub"></div>
+     <div class="wlast"></div>`;
   const wI = cell.querySelector(".fw"), rI = cell.querySelector(".fr"), sub = cell.querySelector(".wsub");
+  const lastEl = cell.querySelector(".wlast");
   cell.querySelector(".plab").onclick = ()=> openFailPop(ex, p, tgt, repsLabel);   // details: last time, why, plates
   const typedW = ()=>{ const t = wI.value.trim(); return t === "" ? null : (/^bw$/i.test(t) ? 0 : num(t)); };
+  function paintLast(){
+    const e = today || lastLogEntry(key, p);
+    lastEl.textContent = formatLogLine(e, isBW);
+  }
   // rest of the sets: from what you did on set 1, or (before you do it) from the grey numbers.
   // Their reps stay at the target — only the weight changes.
   const restReps = metaFor(key).rule === "failall" ? "max" : (range ? range[0].replace(/\s/g, "") : fmtNum(tgt.T));
@@ -952,35 +1105,51 @@ function failCell(ex, p, tgt, repsLabel, cell){
     sub.textContent = n + " more: " + ((b.approx || guessW) ? "~" : "") + loadTxt(b.w) + " × " + restReps;
     sub.className = "wsub" + (real && !guessW ? " then" : "");
   }
-  // saves once set 1 has reps; editing it again later today just updates the same entry
-  function save(){
+  // Weight is stored as soon as it's typed — reps can come after. Never fill the
+  // weight in from the grey suggestion; that used to overwrite what they typed
+  // after a redraw cleared the box.
+  function save(flash){
     const rt = rI.value.trim();
-    if(rt === ""){
-      if(today){ write("logs/" + key + "/" + today.id, null); today = null; }
-      restLine(); return;
+    const r = rt === "" ? 0 : parseInt(rt, 10);
+    if(rt !== "" && !(r > 0 && r < 200)) return;
+    const w = typedW();
+    if(w == null || !(w >= 0)){
+      // Leave today's saved set alone. Undo (in the details popup) is the way to remove it.
+      if(rt !== "") wI.classList.add("need");
+      else wI.classList.remove("need");
+      restLine();
+      return;
     }
-    const r = parseInt(rt, 10);
-    if(!(r > 0 && r < 200)) return;
-    let w = typedW();
-    if(w == null){
-      if(sug && !sug.approx) w = sug.w;
-      else { wI.classList.add("need"); restLine(); return; }    // a machine the app doesn't know yet — type the weight you used
-    }
-    if(!(w >= 0)) return;
     holdRenders();
-    const id = today ? today.id : newLogId(key);
-    const entry = {person: p, weight: fmtNum(w), reps: r, tgt: tgt.T, ts: today ? today.ts : Date.now()};
-    const exp = expectedReps(ex, p, w, tgt.T, id);   // what the app expected at this weight
-    if(exp != null) entry.exp = exp;
-    write("logs/" + key + "/" + id, entry);
-    today = Object.assign({id}, entry);
-    if(wI.value.trim() === "") wI.value = loadTxt(w);
-    [wI, rI].forEach(i=>{ i.classList.remove("need"); i.classList.add("okflash"); setTimeout(()=> i.classList.remove("okflash"), 700); });
+    const fields = {weight: fmtNum(w), dropReps: !(r > 0)};
+    if(r > 0){
+      fields.reps = r;
+      fields.tgt = tgt.T;
+      const exp = expectedReps(ex, p, w, tgt.T, today && today.id);
+      if(exp != null) fields.exp = exp;
+    }
+    today = upsertPersonLog(key, p, fields);
+    if(flash){
+      clearDraft(key, p);
+      [wI, rI].forEach(i=>{
+        i.classList.remove("need"); i.classList.add("okflash");
+        const flashT = setTimeout(()=> i.classList.remove("okflash"), 700);
+        if(flashT.unref) flashT.unref();
+      });
+    }
+    paintLast();
     restLine();
   }
-  wI.oninput = restLine; rI.oninput = restLine;
-  wI.onchange = save; rI.onchange = save;
+  function onEdit(){
+    setDraft(key, p, {w: wI.value.trim(), r: rI.value.trim()});
+    wI.classList.remove("need");
+    restLine();
+    if(typedW() != null) save(false);
+  }
+  wI.oninput = onEdit; rI.oninput = onEdit;
+  wI.onchange = ()=> save(true); rI.onchange = ()=> save(true);
   [wI, rI].forEach(i=> i.onfocus = ()=> setTimeout(()=> i.select(), 0));   // typing replaces the old number
+  paintLast();
   restLine();
 }
 
@@ -1051,26 +1220,36 @@ function exerciseCard(ex, opts){
     if(failMode){
       failCell(ex, p, tgt, opts.reps || ex.reps, cell);
     } else {
-      const val = lastOf(p) != null ? lastOf(p) : (plan.people[p] || "");
+      const draft = draftFor(key, p);
+      const val = (draft && draft.w) ? draft.w : (lastOf(p) != null ? fmtW(lastOf(p)) : (plan.people[p] || ""));
+      const prev = lastLogEntry(key, p);
       cell.innerHTML =
         `<label class="plab ${p}">${PEOPLE[p]}</label>
-         <input class="wbox" inputmode="decimal" data-person="${p}" value="${esc(fmtW(val))}" placeholder="—">`;
+         <input class="wbox" inputmode="decimal" data-person="${p}" value="${esc(val)}" placeholder="—">
+         <div class="wlast">${esc(formatLogLine(prev, m.equip === "bw"))}</div>`;
     }
     boxes.appendChild(cell);
   });
   boxes.querySelectorAll("input.wbox[data-person]").forEach(inp=>{
+    const person = inp.dataset.person;
     // strip " lbs" while editing, and select it so typing replaces the old number
     inp.onfocus = ()=>{ inp.value = inp.value.replace(/\s*lbs\s*$/i, ""); setTimeout(()=> inp.select(), 0); };
-    // on save: store the plain number, then show it with "lbs"
-    inp.onchange = ()=>{
+    const commit = (format)=>{
       const weight = inp.value.trim().replace(/\s*lbs\s*$/i, "");
+      setDraft(key, person, {w: weight, r:""});
       if(!weight) return;
       holdRenders();
-      pushLog(key, {person: inp.dataset.person, weight, ts: Date.now()});
-      inp.value = fmtW(weight);
-      inp.classList.add("okflash");
-      setTimeout(()=>inp.classList.remove("okflash"), 700);
+      upsertPersonLog(key, person, {weight});
+      if(format){
+        clearDraft(key, person);
+        inp.value = fmtW(weight);
+        inp.classList.add("okflash");
+        const flashT = setTimeout(()=> inp.classList.remove("okflash"), 700);
+        if(flashT.unref) flashT.unref();
+      }
     };
+    inp.oninput = ()=> commit(false);   // on the phone immediately, even if they never tap away
+    inp.onchange = ()=> commit(true);
   });
   card.appendChild(boxes);
 
@@ -1141,12 +1320,16 @@ function openFailPop(ex, p, tgt, repsLabel){
     const w = num(raw);
     if(raw === "" || !(w >= 0)){ pw.focus(); return; }
     const r = parseInt(pr.value, 10);
-    const entry = {person: p, weight: fmtNum(w), ts: Date.now()};
-    if(r > 0 && r < 200){ entry.reps = r; entry.tgt = T; }
-    const todayFail = entry.reps ? todays.filter(e=> +e.reps > 0).pop() : null;   // fixing today's set 1 → update it, don't add another
-    if(entry.reps){ const exp = expectedReps(ex, p, w, T, todayFail && todayFail.id); if(exp != null) entry.exp = exp; }
-    if(todayFail){ entry.ts = todayFail.ts; write("logs/" + key + "/" + todayFail.id, entry); }
-    else pushLog(key, entry);
+    const fields = {weight: fmtNum(w)};
+    if(r > 0 && r < 200){
+      fields.reps = r;
+      fields.tgt = T;
+      const today = todays[todays.length - 1];
+      const exp = expectedReps(ex, p, w, T, today && today.id);
+      if(exp != null) fields.exp = exp;
+    } else fields.dropReps = true;
+    upsertPersonLog(key, p, fields);
+    clearDraft(key, p);
     pop.close(); render();
   };
   const pu = pop.q("#pu");
@@ -1486,14 +1669,17 @@ function listenDone(){
 if(FB_OK){
   firebase.initializeApp(firebaseConfig);
   db = firebase.database();
-  OUTBOX.forEach(sendItem);
   ["logs", "ss2", "order", "reps", "exmeta", "settings"].forEach(top=>{
     db.ref(top).on("value",
       s=>{ STATE[top] = s.val() || {}; overlayOutbox(top); saveCache(); safeRender(); },
       err=>{ SYNC_ERROR = (err && err.code) || "error"; updateSync(); });
   });
   listenDone();
-  db.ref(".info/connected").on("value", s=>{ CONNECTED = !!s.val(); updateSync(); });
+  db.ref(".info/connected").on("value", s=>{
+    CONNECTED = !!s.val();
+    if(CONNECTED) flushOutbox();   // anything saved with no signal goes up now
+    else updateSync();
+  });
   migrateSupersets();
 }
 setTimeout(updateSync, 4000);
@@ -1505,9 +1691,15 @@ function checkNewDay(){
   if(TODAY.date === before) return;
   state = {week: TODAY.week, day: TODAY.day || 1};
   editMode = false; selSet.clear();
+  loadDrafts();
   listenDone(); render(true);
 }
-document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState === "visible") checkNewDay(); });
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible"){
+    checkNewDay();
+    if(CONNECTED) flushOutbox();
+  }
+});
 setInterval(checkNewDay, 60000);
 
 // keep a copy of the app on the phone so it opens with no signal
