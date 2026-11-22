@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gym Check">
+<title>Gym Check</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#151922; --line:#262d3a; --text:#eef2f7; --muted:#9aa6b8;
+    --yes:#1fa971; --no:#e23b4c;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.4; font-size:18px;
+    padding-bottom:calc(24px + env(safe-area-inset-bottom));
+  }
+  .top{
+    position:sticky; top:0; z-index:5;
+    background:rgba(11,13,18,.96); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+    padding:calc(env(safe-area-inset-top) + 10px) 14px 12px;
+  }
+  .back{
+    display:inline-flex; align-items:center; min-height:44px;
+    color:#8ee8c4; font-weight:800; font-size:16px; text-decoration:none;
+  }
+  .toprow{display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
+  h1{font-size:22px; margin:0; letter-spacing:.2px;}
+  .count{font-size:16px; font-weight:800; margin:0; white-space:nowrap;}
+  .bar{height:10px; background:#222a38; border-radius:999px; margin:8px 0 0; overflow:hidden;}
+  .bar > div{height:100%; width:0; background:var(--yes); border-radius:999px;}
+  .hint{margin:0; padding:12px 14px 0; color:var(--muted); font-size:16px;}
+  .status{margin:6px 0 0; color:#c9d4e3; font-size:15px; font-weight:700;}
+  .status:empty{display:none;}
+  .wrap{max-width:640px; margin:0 auto;}
+  main{padding:0 12px 20px;}
+  h2{
+    font-size:15px; font-weight:800; letter-spacing:.4px; text-transform:uppercase;
+    color:var(--muted); margin:22px 2px 10px;
+  }
+  .item{
+    background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:12px; margin:0 0 14px;
+  }
+  .item img{
+    display:block; width:100%; height:auto; margin:8px 0 10px;
+    background:#fff; border-radius:12px;
+  }
+  .nopic{
+    width:100%; min-height:88px; margin:8px 0 10px; display:flex; align-items:center;
+    justify-content:center; text-align:center; background:#fff; color:#243044;
+    font-weight:700; font-size:16px; padding:16px; border-radius:12px;
+  }
+  h3{font-size:22px; margin:10px 0 4px; line-height:1.25;}
+  .num{
+    display:inline-block; min-width:2.1em; margin-right:6px;
+    color:#8ee8c4; font-variant-numeric:tabular-nums;
+  }
+  .use{margin:0 0 12px; color:#d5deea; font-size:17px;}
+  .yn{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .yn button{
+    min-height:64px; border-radius:14px; font-size:22px; font-weight:800;
+    cursor:pointer; touch-action:manipulation;
+  }
+  .yn .yes{background:#143028; color:#b7f5dc; border:3px solid #1f5546;}
+  .yn .no{background:#3a1c22; color:#ffc4ca; border:3px solid #6a3038;}
+  .yn .yes.on{background:var(--yes); color:#fff; border-color:#d8ffe9; box-shadow:0 0 0 3px var(--yes);}
+  .yn .no.on{background:var(--no); color:#fff; border-color:#ffd5da; box-shadow:0 0 0 3px var(--no);}
+  .yn button:active{transform:scale(.98);}
+</style>
+</head>
+<body>
+  <header class="top">
+    <a class="back" href="index.html">Back to workouts</a>
+    <div class="toprow">
+      <h1>Gym Check</h1>
+      <p class="count" id="count">0 of 44 answered</p>
+    </div>
+    <div class="bar" aria-hidden="true"><div id="barFill"></div></div>
+    <p class="status" id="status"></p>
+  </header>
+  <div class="wrap">
+    <p class="hint">Tap Yes if your gym has it. Tap No if it does not. Tap the same button again to clear it.</p>
+    <main id="list"></main>
+  </div>
+<script>
+(function(){
+  var LS_KEY = "gymEquipment";
+  var firebaseConfig = {
+    apiKey: "AIzaSyCmIzRbSnZ7QHaT-HazNzgOSBL_BBwgMRE",
+    authDomain: "workout-tracker-66382.firebaseapp.com",
+    databaseURL: "https://workout-tracker-66382-default-rtdb.firebaseio.com",
+    projectId: "workout-tracker-66382",
+    storageBucket: "workout-tracker-66382.firebasestorage.app",
+    messagingSenderId: "128695554425",
+    appId: "1:128695554425:web:ca2fa7e21adcab5bcbdfa8"
+  };
+  var GROUPS = [
+    {title:"Free weights", items:[
+      {n:"01", slug:"dumbbells", name:"Dumbbells", file:"01-dumbbells.webp", use:"Weights you hold in each hand."},
+      {n:"02", slug:"olympic-barbell", name:"Olympic barbell", file:"02-olympic-barbell.webp", use:"A long bar for big lifts like squats and bench."},
+      {n:"03", slug:"ez-curl-bar", name:"EZ curl bar", file:"03-ez-curl-bar.webp", use:"A bent bar that is easier on your wrists."},
+      {n:"04", slug:"trap-bar", name:"Trap bar", file:"04-trap-bar.webp", use:"A bar you stand inside to lift."},
+      {n:"05", slug:"kettlebells", name:"Kettlebells", file:"05-kettlebells.webp", use:"A round weight with a handle on top."}
+    ]},
+    {title:"Racks and benches", items:[
+      {n:"06", slug:"squat-rack", name:"Squat rack", file:"06-squat-rack.webp", use:"A frame that holds the bar for squats."},
+      {n:"07", slug:"smith-machine", name:"Smith machine", file:"07-smith-machine.webp", use:"A bar that slides up and down on rails."},
+      {n:"08", slug:"flat-bench", name:"Flat bench", file:"08-flat-bench.webp", use:"A flat bench you lie on to press."},
+      {n:"09", slug:"incline-bench", name:"Incline bench", file:"09-incline-bench.webp", use:"A bench that slopes up."},
+      {n:"10", slug:"adjustable-bench", name:"Adjustable bench", file:"10-adjustable-bench.webp", use:"A bench you can set flat or tilted."},
+      {n:"11", slug:"preacher-bench", name:"Preacher bench", file:"11-preacher-bench.webp", use:"A bench that holds your arms for curls."}
+    ]},
+    {title:"Cables", items:[
+      {n:"12", slug:"cable-crossover", name:"Cable crossover", file:"12-cable-crossover.webp", use:"Two cables you pull across your body."},
+      {n:"13", slug:"single-cable", name:"Single cable", file:"13-single-cable.webp", use:"One cable you pull or push."},
+      {n:"14", slug:"lat-pulldown", name:"Lat pulldown", file:"14-lat-pulldown.webp", use:"A bar you pull down for your back."},
+      {n:"15", slug:"seated-cable-row", name:"Seated cable row", file:"15-seated-cable-row.webp", use:"A handle you pull in while you sit."}
+    ]},
+    {title:"Upper body machines", items:[
+      {n:"16", slug:"chest-press", name:"Chest press", file:"16-chest-press.webp", use:"A machine you press for your chest."},
+      {n:"17", slug:"pec-deck", name:"Pec deck", file:"17-pec-deck.webp", use:"A machine that brings your arms together."},
+      {n:"18", slug:"shoulder-press-machine", name:"Shoulder press machine", file:"18-shoulder-press-machine.webp", use:"A machine you press up for your shoulders."},
+      {n:"19", slug:"lateral-raise-machine", name:"Lateral raise machine", file:"19-lateral-raise-machine.webp", use:"A machine that lifts your arms out to the side."},
+      {n:"20", slug:"assisted-pullup", name:"Assisted pull up", file:"20-assisted-pullup.webp", use:"A machine that helps you pull yourself up."}
+    ]},
+    {title:"Bodyweight", items:[
+      {n:"21", slug:"pullup-bar", name:"Pull up bar", file:"21-pullup-bar.webp", use:"A bar you hang from and pull up to."},
+      {n:"22", slug:"dip-station", name:"Dip station", file:"22-dip-station.webp", use:"Bars you push your body up between."},
+      {n:"23", slug:"dip-belt", name:"Dip belt", file:"23-dip-belt.webp", use:"A belt that hangs extra weight from your waist."},
+      {n:"29", slug:"back-extension", name:"Back extension", file:"29-back-extension.webp", use:"A pad you bend over to work your lower back."},
+      {n:"30", slug:"landmine", name:"Landmine", file:"30-landmine.webp", use:"A post that holds one end of a bar so it can pivot."},
+      {n:"35", slug:"resistance-bands", name:"Resistance bands", file:"35-resistance-bands.webp", use:"Stretchy bands you pull."}
+    ]},
+    {title:"Leg machines", items:[
+      {n:"24", slug:"leg-press", name:"Leg press", file:"24-leg-press.webp", use:"A machine you push with your feet."},
+      {n:"25", slug:"leg-extension", name:"Leg extension", file:"25-leg-extension.webp", use:"A machine that straightens your legs."},
+      {n:"26", slug:"leg-curl", name:"Leg curl", file:"26-leg-curl.webp", use:"A machine that bends your legs."},
+      {n:"27", slug:"hip-thrust-machine", name:"Hip thrust machine", file:"27-hip-thrust-machine.webp", use:"A machine you drive your hips up on."},
+      {n:"28", slug:"calf-raise", name:"Calf raise", file:"28-calf-raise.webp", use:"A machine you rise onto your toes on."}
+    ]},
+    {title:"Cardio", items:[
+      {n:"31", slug:"rower", name:"Rower", file:"31-rower.webp", use:"A machine you pull, like rowing a boat."},
+      {n:"32", slug:"assault-bike", name:"Assault bike", file:"32-assault-bike.webp", use:"A bike you push with your arms and your legs."},
+      {n:"33", slug:"stair-climber", name:"Stair climber", file:"33-stair-climber.webp", use:"A machine that feels like climbing stairs."},
+      {n:"34", slug:"treadmill", name:"Treadmill", file:"34-treadmill.webp", use:"A machine you walk or run on."}
+    ]},
+    {title:"Maybe your gym has these", items:[
+      {n:"36", slug:"hack-squat", name:"Hack squat", file:"36-hack-squat.webp", use:"A machine you squat in with your back on a pad."},
+      {n:"37", slug:"pendulum-squat", name:"Pendulum squat", file:"37-pendulum-squat.webp", use:"A squat machine that swings on an arm."},
+      {n:"38", slug:"hammer-row", name:"Hammer row", file:"38-hammer-row.webp", use:"A machine you pull for your back."},
+      {n:"39", slug:"bicep-curl-machine", name:"Biceps curl machine", file:"39-bicep-curl-machine.webp", use:"A machine that curls for your arms."},
+      {n:"40", slug:"tricep-extension-machine", name:"Triceps extension machine", file:"40-tricep-extension-machine.webp", use:"A machine that straightens your arms."},
+      {n:"41", slug:"ab-crunch-machine", name:"Ab crunch machine", file:"41-ab-crunch-machine.webp", use:"A machine you crunch your stomach on."},
+      {n:"42", slug:"hip-abductor", name:"Hip abductor", file:"42-hip-abductor.webp", use:"A machine that pushes your legs out to the side."}
+    ]},
+    {title:"Also check these", items:[
+      {n:"43", slug:"fixed-straight-bar", name:"Fixed straight bar", file:"", use:"A straight bar that is already one weight. You do not add plates."},
+      {n:"44", slug:"sled", name:"Sled", file:"", use:"A sled you push or pull across the floor."}
+    ]}
+  ];
+
+  var ITEMS = [];
+  GROUPS.forEach(function(g){ g.items.forEach(function(it){ ITEMS.push(it); }); });
+  var KNOWN = {};
+  ITEMS.forEach(function(it){ KNOWN[it.slug] = true; });
+
+  var db = null;
+  var cloudStarting = null;
+
+  function load(){
+    try{
+      var v = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+      return v && typeof v === "object" ? v : {};
+    }catch(e){ return {}; }
+  }
+  function save(data){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(data)); }catch(e){}
+  }
+  function isAnswer(v){ return v === "yes" || v === "no"; }
+  function norm(v){
+    if(v === "yes" || v === "no") return {answer:v, ts:0};
+    if(!v || typeof v !== "object") return null;
+    var answer = v.answer || v.v;
+    var ts = +(v.ts != null ? v.ts : v.t) || 0;
+    if(answer === "yes" || answer === "no") return {answer:answer, ts:ts};
+    return null;
+  }
+
+  function paint(){
+    var data = load();
+    var n = 0;
+    var pending = false;
+    ITEMS.forEach(function(it){
+      var rec = data[it.slug];
+      var ans = rec && isAnswer(rec.answer) ? rec.answer : "";
+      if(ans) n++;
+      if(rec && rec.pending) pending = true;
+      var yes = document.querySelector('button[data-slug="'+it.slug+'"][data-answer="yes"]');
+      var no = document.querySelector('button[data-slug="'+it.slug+'"][data-answer="no"]');
+      if(yes){ yes.classList.toggle("on", ans === "yes"); yes.setAttribute("aria-pressed", ans === "yes" ? "true" : "false"); }
+      if(no){ no.classList.toggle("on", ans === "no"); no.setAttribute("aria-pressed", ans === "no" ? "true" : "false"); }
+    });
+    document.getElementById("count").textContent = n + " of " + ITEMS.length + " answered";
+    document.getElementById("barFill").style.width = Math.round(100 * n / ITEMS.length) + "%";
+    var status = document.getElementById("status");
+    if(pending) status.textContent = "Saved on this phone. Uploads when you have signal.";
+    else if(!navigator.onLine && n) status.textContent = "Saved on this phone. Uploads when you have signal.";
+    else if(n) status.textContent = "Saved.";
+    else if(!navigator.onLine) status.textContent = "You are offline. Answers will save on this phone.";
+    else status.textContent = "";
+  }
+
+  function applyRemote(remote){
+    var local = load();
+    var changed = false;
+    Object.keys(KNOWN).forEach(function(slug){
+      var cur = local[slug];
+      if(cur && cur.pending) return;
+      var r = norm(remote[slug]);
+      if(!r){
+        if(cur){ delete local[slug]; changed = true; }
+        return;
+      }
+      if(!cur || r.ts >= (+cur.ts || 0)){
+        if(!cur || cur.answer !== r.answer || cur.ts !== r.ts){
+          local[slug] = {answer:r.answer, ts:r.ts, pending:false};
+          changed = true;
+        }
+      }
+    });
+    if(changed) save(local);
+    paint();
+  }
+
+  function pushSlug(slug){
+    if(!db) return Promise.resolve();
+    var rec = load()[slug];
+    if(!rec || !rec.pending) return Promise.resolve();
+    var ref = db.ref("gymEquipment/" + slug);
+    return ref.once("value").then(function(snap){
+      var now = load()[slug];
+      if(!now || now.ts !== rec.ts || !now.pending) return;
+      var remote = norm(snap.val());
+      if(remote && remote.ts > rec.ts){
+        var newer = load();
+        newer[slug] = {answer:remote.answer, ts:remote.ts, pending:false};
+        save(newer);
+        paint();
+        return;
+      }
+      var op = isAnswer(rec.answer) ? ref.set({answer:rec.answer, ts:rec.ts}) : ref.remove();
+      return op.then(function(){
+        var data = load();
+        var cur = data[slug];
+        if(!cur || cur.ts !== rec.ts) return;
+        if(isAnswer(rec.answer)) data[slug] = {answer:rec.answer, ts:rec.ts, pending:false};
+        else delete data[slug];
+        save(data);
+        paint();
+      });
+    }).catch(function(){ paint(); });
+  }
+
+  function flush(){
+    var data = load();
+    var slugs = Object.keys(data).filter(function(s){ return data[s] && data[s].pending && KNOWN[s]; });
+    return slugs.reduce(function(p, slug){ return p.then(function(){ return pushSlug(slug); }); }, Promise.resolve());
+  }
+
+  function loadScript(src){
+    return new Promise(function(resolve, reject){
+      var s = document.createElement("script");
+      s.src = src;
+      s.onload = function(){ resolve(); };
+      s.onerror = function(){ reject(new Error("script")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function startCloud(){
+    if(db) return flush();
+    if(cloudStarting) return cloudStarting;
+    cloudStarting = loadScript("https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js")
+      .then(function(){ return loadScript("https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"); })
+      .then(function(){
+        if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        db = firebase.database();
+        db.ref("gymEquipment").on("value", function(snap){ applyRemote(snap.val() || {}); });
+        return flush();
+      })
+      .catch(function(){ cloudStarting = null; paint(); });
+    return cloudStarting;
+  }
+
+  function choose(slug, answer){
+    if(!KNOWN[slug] || !isAnswer(answer)) return;
+    var data = load();
+    var cur = data[slug];
+    if(cur && cur.answer === answer) data[slug] = {answer:null, ts:Date.now(), pending:true};
+    else data[slug] = {answer:answer, ts:Date.now(), pending:true};
+    save(data);
+    paint();
+    if(db) pushSlug(slug);
+    else startCloud();
+  }
+
+  function build(){
+    var root = document.getElementById("list");
+    GROUPS.forEach(function(g){
+      var h = document.createElement("h2");
+      h.textContent = g.title;
+      root.appendChild(h);
+      g.items.forEach(function(item){
+        var card = document.createElement("article");
+        card.className = "item";
+        var h3 = document.createElement("h3");
+        var num = document.createElement("span");
+        num.className = "num";
+        num.textContent = item.n;
+        h3.appendChild(num);
+        h3.appendChild(document.createTextNode(item.name));
+        var use = document.createElement("p");
+        use.className = "use";
+        use.textContent = item.use;
+        card.appendChild(h3);
+        card.appendChild(use);
+        if(item.file){
+          var img = document.createElement("img");
+          img.src = "img/gym/" + item.file;
+          img.alt = item.name;
+          img.onerror = function(){
+            var box = document.createElement("div");
+            box.className = "nopic";
+            box.textContent = "Picture did not load. You can still answer.";
+            img.replaceWith(box);
+          };
+          card.appendChild(img);
+        }
+        var yn = document.createElement("div");
+        yn.className = "yn";
+        ["yes","no"].forEach(function(a){
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = a;
+          b.dataset.slug = item.slug;
+          b.dataset.answer = a;
+          b.textContent = a === "yes" ? "Yes" : "No";
+          b.setAttribute("aria-label", (a === "yes" ? "Yes, " : "No, ") + item.name);
+          b.setAttribute("aria-pressed", "false");
+          yn.appendChild(b);
+        });
+        card.appendChild(yn);
+        root.appendChild(card);
+      });
+    });
+    root.addEventListener("click", function(e){
+      var b = e.target.closest ? e.target.closest("button") : null;
+      if(!b || !b.dataset.slug) return;
+      choose(b.dataset.slug, b.dataset.answer);
+    });
+  }
+
+  build();
+  paint();
+  startCloud();
+  window.addEventListener("online", function(){ startCloud(); });
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible") startCloud();
+  });
+  setInterval(function(){
+    var data = load();
+    var pending = Object.keys(data).some(function(s){ return data[s] && data[s].pending; });
+    if(pending) startCloud();
+  }, 20000);
+})();
+</script>
+</body>
+</html>
