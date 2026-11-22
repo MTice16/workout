@@ -33,6 +33,9 @@ globalThis.flushOutbox = flushOutbox;
 globalThis.loadPersisted = loadPersisted;
 globalThis.upsertPersonLog = upsertPersonLog;
 globalThis.formatLogLine = formatLogLine;
+globalThis.weightText = weightText;
+globalThis.plainWeight = plainWeight;
+globalThis.setsHTML = setsHTML;
 globalThis.draftFor = draftFor;
 globalThis.overlayOutbox = overlayOutbox;
 globalThis.getOutbox = function(){ return OUTBOX; };
@@ -76,7 +79,7 @@ const {
   DATA, STATE, suggestFor, expectedReps, pickWeight, weightList, learnedList, metaFor,
   exKey, targetOf, logsFor, failCell, write, flushOutbox, loadPersisted, upsertPersonLog,
   draftFor, overlayOutbox, getOutbox, setDB, setConnected, _clearFlushTimer, _resetOutbox,
-  planSetLoads, shortRest, snapBackoff, failSetLoads
+  planSetLoads, shortRest, snapBackoff, failSetLoads, weightText, plainWeight, setsHTML
 } = globalThis;
 
 let failed = 0;
@@ -301,7 +304,9 @@ function drain(){
   const cell = makeCell();
   failCell(row1, "matthias", targetOf("4x6"), "4x6", cell);
   const lastLine = cell.querySelector(".wlast").textContent;
-  assert(lastLine.indexOf("50 × 6") === 0, "last log line: " + JSON.stringify(lastLine));
+  assert(lastLine.indexOf("50 LB × 6") === 0, "last log line: " + JSON.stringify(lastLine));
+  assert(cell.querySelector(".fw").value.indexOf("LB") < 0, "weight box stored the unit: " + cell.querySelector(".fw").value);
+  assert(!!cell.querySelector(".lb"), "weight box is missing the LB label");
   const wI = cell.querySelector(".fw");
   const rI = cell.querySelector(".fr");
   assert(wI.value === "", "box should start empty (history is the line under it), got " + JSON.stringify(wI.value));
@@ -476,6 +481,13 @@ function drain(){
   assert(shortRest("Rest 2\u20133 min") === "Rest 2\u20133m", "solo rest");
   const failRow = failSetLoads(benchEx, "matthias", 175, 6, targetOf("4x6"), 4, "fail", false);
   assert(failRow && failRow[0].kind === "fail" && failRow[1].kind === "" && failRow[1].label !== "175", "failure chips " + JSON.stringify(failRow));
+  assert(weightText("175") === "175 LB" && weightText("175 lbs") === "175 LB" && weightText("~155") === "~155 LB", weightText("175 lbs") + " / " + weightText("~155"));
+  assert(weightText("BW") === "BW" && weightText("bodyweight") === "bodyweight" && weightText("2x 35lbs") === "2x 35lbs", "notes should keep their own wording");
+  assert(plainWeight("175 lbs") === "175" && plainWeight("175") === "175" && plainWeight("2x 35lbs") === "2x 35lbs", "plain weight changed a note");
+  const chips = setsHTML([{i:1, label:"175"}, {i:2, label:"155", fail:true}, {i:3, label:"BW"}], false);
+  assert(chips.indexOf('class="slbl">S1<') > 0 && chips.indexOf('175 <span class="lb">LB</span>') > 0, "chip html " + chips);
+  assert(chips.indexOf("\uD83D\uDD25") > 0, "failure marker missing " + chips);
+  assert(chips.indexOf("BW<span") < 0 && chips.indexOf("> BW<") > 0, "bodyweight chip " + chips);
 
   if(failed){
     console.error(failed + " failed");
