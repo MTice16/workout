@@ -36,6 +36,10 @@ globalThis.formatLogLine = formatLogLine;
 globalThis.draftFor = draftFor;
 globalThis.overlayOutbox = overlayOutbox;
 globalThis.getOutbox = function(){ return OUTBOX; };
+globalThis.groupsForDay = groupsForDay;
+globalThis.DEFAULT_SS = DEFAULT_SS;
+globalThis.SS_PLAN = SS_PLAN;
+globalThis.ensurePlanSupersets = ensurePlanSupersets;
 globalThis.setDB = function(d){ db = d; };
 globalThis.setConnected = function(v){ CONNECTED = v; };
 globalThis._clearFlushTimer = function(){ if(flushDelay){ clearTimeout(flushDelay); flushDelay = null; } };
@@ -188,22 +192,24 @@ function drain(){
   reset();
   const leg = exBy(1, 3, "Leg Press");
   const ext = exBy(1, 3, "Leg Extension");
-  const fly = exBy(1, 4, "Dumbbell Fly Flat");
+  const fly = exBy(1, 1, "Dumbbell Fly Flat");
   const hammer = exBy(1, 2, "Hammer Curl (Dumbbell)");
+  const bench = exBy(1, 1, "Barbell Bench Press");
   const planCases = [
-    [leg, "matthias", 8, 190],
-    [ext, "matthias", 12, 145],
-    [fly, "matthias", 12, 12.5],
-    [fly, "hailey", 12, 5],
-    [hammer, "matthias", 9, 22.5]
+    [bench, "matthias", 6, 175],
+    [leg, "matthias", 10, 350],
+    [ext, "matthias", 13, 145],
+    [fly, "matthias", 11, 25],
+    [hammer, "matthias", 11, 30]
   ];
+  assert(suggestFor(bench, "hailey", 6) == null, "hailey should not get a prefilled bench weight");
   planCases.forEach(([ex, p, T, want])=>{
     const s = suggestFor(ex, p, T);
     assert(s && s.w === want, ex.name + " " + p + " plan start " + (s && s.w) + " wanted " + want + " (not " + (want / 0.85) + ")");
   });
 
   reset();
-  const row = exBy(1, 1, "Barbell Upright Row");
+  const row = exBy(1, 2, "Barbell Bent Over Row");
   addLog(row, "matthias", 95, null, null, 1);
   const kept = suggestFor(row, "matthias", 6);
   assert(kept && kept.w === 95, "weight-only 95 should stay 95, got " + (kept && kept.w));
@@ -218,9 +224,9 @@ function drain(){
 
   // --- same rep target stays put; a different week does not walk the weight down ---
   reset();
-  const row1 = exBy(1, 1, "Barbell Upright Row");
-  const row2 = exBy(2, 1, "Barbell Upright Row");
-  recordSet(row1, "matthias", 65, 6, 6, 1);
+  const row1 = exBy(1, 4, "Seated Dumbbell Shoulder Press");
+  const row2 = exBy(2, 1, "Seated Dumbbell Shoulder Press");
+  recordSet(row1, "matthias", 30, 6, 6, 1);
   const seq = {6: [], 8: []};
   let ts = 2;
   for(let i = 0; i < 6; i++){
@@ -230,15 +236,15 @@ function drain(){
     seq[T].push(s && s.w);
     recordSet(ex, "matthias", s.w, T, T, ts++);
   }
-  console.log("upright row, hit every target:", JSON.stringify(seq));
-  assert(seq[6].every(w => w === 65), "week-1 target drifted off 65: " + seq[6].join(" -> "));
+  console.log("seated press, hit every target:", JSON.stringify(seq));
+  assert(seq[6].every(w => w === 30), "week-1 target drifted off 30: " + seq[6].join(" -> "));
   assert(seq[8].length >= 2 && seq[8].every(w => w === seq[8][0]), "week-2 target drifted: " + seq[8].join(" -> "));
   assert(expectedReps(row2, "matthias", seq[8][0], 8) != null, "same-target expectation should exist after a set is logged");
 
   reset();
   STATE.settings = {bw: {matthias: "180"}};
-  const dip1 = exBy(1, 1, "Weighted Dips");
-  const dip2 = exBy(2, 1, "Weighted Dips");
+  const dip1 = exBy(1, 3, "Hanging Leg Raise");
+  const dip2 = exBy(2, 3, "Hanging Leg Raise");
   recordSet(dip1, "matthias", 45, 7, 7, 1);
   const dips = {7: [], 8: []};
   ts = 2;
@@ -249,7 +255,7 @@ function drain(){
     dips[T].push(s && s.w);
     recordSet(ex, "matthias", s.w, T, T, ts++);
   }
-  console.log("weighted dips @180bw, hit every target:", JSON.stringify(dips));
+  console.log("hanging leg raise @180bw, hit every target:", JSON.stringify(dips));
   assert(dips[7].every(w => w === 45), "dips week-1 drifted off 45: " + dips[7].join(" -> "));
   assert(dips[8].every(w => w === dips[8][0]), "dips week-2 drifted: " + dips[8].join(" -> "));
 
@@ -387,6 +393,61 @@ function drain(){
   assert(getOutbox().length === 0 && attempts.length === 2, "retry result " + attempts.length + " outbox " + getOutbox().length);
   assert(attempts[0].path === attempts[1].path && attempts[1].value.weight === "270", "retry changed the set");
   _clearFlushTimer();
+
+  // --- new plan: groups, rest, failure markers, images, hailey left blank ---
+  reset();
+  const heavyStop = ["Barbell Bench Press","Dumbbell Bench Press","Standing Barbell Overhead Press","Seated Dumbbell Shoulder Press","Barbell Incline Press","Incline Dumbbell Press","Back Squat","Front Squat","Hack Squat","Deadlift","Trap Bar Deadlift","Leg Press","Hip Thrust Machine","Bulgarian Split Squat","Machine Shoulder Press"];
+  const mediumLast = ["Pull Ups","Weighted Chin Ups","Barbell Bent Over Row","Hammer Strength Row","Single Arm Dumbbell Row","Chest Supported Row Machine","Seated Cable Row (neutral grip)","Seated Cable Row (close grip)","Lat Pulldown (wide grip)","Neutral Grip Pulldown","Weighted Dips","JM Press"];
+  const seen = {};
+  [1, 2].forEach(w => [1, 2, 3, 4, 5].forEach(d => {
+    const names = DATA[w][d].ex.map(e => e.name);
+    assert(new Set(names).size === names.length, "duplicate on week " + w + " day " + d);
+    DATA[w][d].ex.forEach(e => {
+      seen[e.name] = true;
+      assert(e.img, "missing image " + e.name);
+      assert(e.effort === "stop" || e.effort === "last", "effort " + e.name);
+      assert(!e.note || !/\bH\b/.test(e.note), "hailey prefilled on " + e.name + " " + e.note);
+      const solo = DATA[w][d].ex.filter(x => x.letter === e.letter).length === 1;
+      if(solo) assert(e.rest, e.name + " solo has no rest");
+    });
+  }));
+  heavyStop.forEach(n => {
+    assert(seen[n], "missing heavy " + n);
+    [1, 2].forEach(w => [1, 2, 3, 4, 5].forEach(d => DATA[w][d].ex.forEach(e => {
+      if(e.name === n) assert(e.effort === "stop" && e.backoff, n + " should stop short with a back-off");
+    })));
+  });
+  mediumLast.forEach(n => {
+    [1, 2].forEach(w => [1, 2, 3, 4, 5].forEach(d => DATA[w][d].ex.forEach(e => {
+      if(e.name === n) assert(e.effort === "last" && e.backoff, n + " should be last set to failure");
+    })));
+  });
+  ["Barbell Curl","Dumbbell Lateral Raise","Cable Face Pull","EZ Bar Skull Crushers","Leg Extension","Leg Curl","Standing Calf Raise","Dumbbell Shrugs","Rope Pushdowns"].forEach(n => {
+    [1, 2].forEach(w => [1, 2, 3, 4, 5].forEach(d => DATA[w][d].ex.forEach(e => {
+      if(e.name === n) assert(e.effort === "last" && !e.backoff, n + " isolation got a back-off or the wrong marker");
+    })));
+  });
+  STATE.ss2 = {tue: {old: {keys: ["pull-ups","hammer-curl-dumbbell-"], sets: "3", t: Date.now()}}};
+  STATE.settings = {};
+  const tue = groupsForDay(1, 2);
+  assert(tue.some(g => g.keys.includes("pull-ups") && g.keys.includes("reverse-cable-fly")), "old Tuesday group hid the new pull-up pair " + JSON.stringify(tue));
+  assert(!tue.some(g => g.keys.includes("pull-ups") && g.keys.includes("hammer-curl-dumbbell-")), "stale Tuesday group still showing");
+  const mon = groupsForDay(1, 1);
+  assert(mon.some(g => g.rest && g.keys.includes("barbell-bench-press") && g.keys.includes("cable-face-pull")), "Monday bench pair " + JSON.stringify(mon));
+  assert(groupsForDay(1, 1).every(g => !g.keys.includes("standing-barbell-overhead-press")), "overhead press should stay solo");
+  const fri1 = groupsForDay(1, 5);
+  const fri2 = groupsForDay(2, 5);
+  assert(fri1.some(g => g.keys.includes("hip-thrust-machine") && g.keys.includes("bulgarian-split-squat")), "week 1 hip thrust pair");
+  assert(fri2.some(g => g.keys.includes("hip-thrust-machine") && g.keys.includes("farmer-carry")), "week 2 hip thrust pair");
+  assert(!fri1.some(g => g.keys.includes("farmer-carry") && g.keys.includes("hip-thrust-machine")), "week 1 picked the week 2 hip thrust pair");
+  assert(exBy(1, 5, "Deadlift").rest && exBy(2, 5, "Trap Bar Deadlift").effort === "stop", "deadlift rest / trap bar marker");
+  reset();
+  STATE.ss2 = {mon: {oldbench: {keys: ["barbell-bench-press","incline-dumbbell-press"], sets: "4", t: 9}}};
+  ensurePlanSupersets();
+  assert(STATE.settings.ssPlan === SS_PLAN, "plan version was not saved");
+  assert(STATE.ss2.mon["plan-mon-w1-a"] && STATE.ss2.mon["plan-mon-w1-a"].keys.includes("cable-face-pull"), "plan group was not seeded");
+  assert(!STATE.ss2.mon.oldbench, "overlapping old Monday group was kept");
+  assert(STATE.logs && Object.keys(STATE.logs).length === 0, "superset reset touched logs");
 
   if(failed){
     console.error(failed + " failed");
