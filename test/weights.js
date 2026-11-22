@@ -40,6 +40,10 @@ globalThis.groupsForDay = groupsForDay;
 globalThis.DEFAULT_SS = DEFAULT_SS;
 globalThis.SS_PLAN = SS_PLAN;
 globalThis.ensurePlanSupersets = ensurePlanSupersets;
+globalThis.planSetLoads = planSetLoads;
+globalThis.shortRest = shortRest;
+globalThis.snapBackoff = snapBackoff;
+globalThis.failSetLoads = failSetLoads;
 globalThis.setDB = function(d){ db = d; };
 globalThis.setConnected = function(v){ CONNECTED = v; };
 globalThis._clearFlushTimer = function(){ if(flushDelay){ clearTimeout(flushDelay); flushDelay = null; } };
@@ -71,7 +75,8 @@ vm.runInThisContext(code, {filename: "index.html"});
 const {
   DATA, STATE, suggestFor, expectedReps, pickWeight, weightList, learnedList, metaFor,
   exKey, targetOf, logsFor, failCell, write, flushOutbox, loadPersisted, upsertPersonLog,
-  draftFor, overlayOutbox, getOutbox, setDB, setConnected, _clearFlushTimer, _resetOutbox
+  draftFor, overlayOutbox, getOutbox, setDB, setConnected, _clearFlushTimer, _resetOutbox,
+  planSetLoads, shortRest, snapBackoff, failSetLoads
 } = globalThis;
 
 let failed = 0;
@@ -448,6 +453,29 @@ function drain(){
   assert(STATE.ss2.mon["plan-mon-w1-a"] && STATE.ss2.mon["plan-mon-w1-a"].keys.includes("cable-face-pull"), "plan group was not seeded");
   assert(!STATE.ss2.mon.oldbench, "overlapping old Monday group was kept");
   assert(STATE.logs && Object.keys(STATE.logs).length === 0, "superset reset touched logs");
+
+  // glance row: back-off is ~12.5% snapped to the equipment, not a sentence
+  reset();
+  const benchEx = exBy(1, 1, "Barbell Bench Press");
+  assert(snapBackoff(benchEx, 175) === 155, "175 lb bench back-off should be 155, got " + snapBackoff(benchEx, 175));
+  assert(snapBackoff(benchEx, 65) === 55, "65 lb bar back-off should be 55, got " + snapBackoff(benchEx, 65));
+  const incEx = exBy(1, 1, "Incline Dumbbell Press");
+  assert(snapBackoff(incEx, 50) === 45, "50 lb dumbbell back-off should be 45, got " + snapBackoff(incEx, 50));
+  assert(snapBackoff(exBy(1, 1, "Dumbbell Lateral Raise"), 15) === 12.5, "15 lb dumbbell back-off should be 12.5");
+  const ezEx = exBy(1, 1, "EZ Bar Skull Crushers");
+  assert(snapBackoff(ezEx, 80) === 70, "80 lb fixed bar back-off should be 70, got " + snapBackoff(ezEx, 80));
+  const benchSets = planSetLoads(benchEx, "175 lbs", 4);
+  assert(benchSets && benchSets.map(s => s.label).join(",") === "175,155,155,155", "bench chips " + JSON.stringify(benchSets));
+  assert(benchSets.every(s => !s.fail), "heavy bench sets are not to failure");
+  const face = planSetLoads(exBy(1, 1, "Cable Face Pull"), "30", 4);
+  assert(face && face.map(s => s.label).join(",") === "30,30,30,30" && face[3].fail && !face[0].fail, "face pull last set only " + JSON.stringify(face));
+  assert(planSetLoads(benchEx, "", 4) == null, "empty weight should not invent chips");
+  assert(shortRest("Rest 2\u20133 min after the pair") === "Rest 2\u20133m", "pair rest " + shortRest("Rest 2\u20133 min after the pair"));
+  assert(shortRest("Rest 90 s\u20132 min after the pair") === "Rest 90s\u20132m", "mixed rest " + shortRest("Rest 90 s\u20132 min after the pair"));
+  assert(shortRest("Rest 60\u201390 s after the group") === "Rest 60\u201390s", "seconds rest " + shortRest("Rest 60\u201390 s after the group"));
+  assert(shortRest("Rest 2\u20133 min") === "Rest 2\u20133m", "solo rest");
+  const failRow = failSetLoads(benchEx, "matthias", 175, 6, targetOf("4x6"), 4, "fail", false);
+  assert(failRow && failRow[0].kind === "fail" && failRow[1].kind === "" && failRow[1].label !== "175", "failure chips " + JSON.stringify(failRow));
 
   if(failed){
     console.error(failed + " failed");

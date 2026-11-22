@@ -1,6 +1,6 @@
 /* Workout tracker cache. Network first, so a home-screen update shows
    the next time the phone is online. The old copy is only for offline opens. */
-const CACHE = "wt-plan-2026-11-22";
+const CACHE = "wt-glance-2026-11-22";
 self.addEventListener("install", event => { self.skipWaiting(); });
 self.addEventListener("activate", event => {
   event.waitUntil(
