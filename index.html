@@ -97,10 +97,19 @@
   .trow{display:flex; align-items:center; gap:7px; margin-bottom:4px;}
   .ordsel{flex:0 0 auto; background:var(--panel2); color:var(--text); border:1px solid var(--line);
     border-radius:8px; font-size:13px; font-weight:800; padding:5px 3px; cursor:pointer; text-transform:none;}
-  .extitle{flex:1; min-width:0; display:flex; align-items:center; gap:6px;
+  .extitle{flex:1; min-width:0; display:flex; align-items:center;
     background:transparent; border:0; color:var(--text); padding:0; cursor:pointer; text-align:left;}
-  .extitle .tnm{flex:1; min-width:0; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .extitle .exicon{flex:0 0 auto; font-size:13px; opacity:.55;}
+  .extitle .tnm{display:block; width:100%; font-size:15px; font-weight:800; line-height:1.15;
+    white-space:normal; overflow:visible;}
+  .thumbwrap{position:relative; flex:0 0 auto; width:68px; height:52px;}
+  .thumb{width:68px; height:52px; border:1px solid var(--line); border-radius:8px; padding:0; overflow:hidden;
+    background:#0f1219; display:block; cursor:pointer;}
+  .thumb img{width:100%; height:100%; object-fit:contain; display:block;}
+  .thumb.ph{background:repeating-linear-gradient(45deg,#20262f,#20262f 6px,#232a34 6px,#232a34 12px);}
+  .miniinfo{position:absolute; right:-5px; bottom:-5px; z-index:2; width:22px; height:22px; border-radius:50%;
+    border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:12px; font-weight:800;
+    font-family:Georgia, serif; font-style:italic; padding:0; line-height:1; cursor:pointer;}
+  .miniinfo:active{background:var(--accent); color:#fff;}
   .repsedit{flex:0 0 auto; background:var(--chip); color:var(--text); border:1px solid var(--line); text-transform:none;
     border-radius:7px; font-size:13px; font-weight:800; padding:4px 8px; cursor:pointer; white-space:nowrap;}
   .repsedit:active{background:var(--panel2);}
@@ -147,6 +156,25 @@
   .plab.tap{cursor:pointer;}
   .wsub, .wlast{font-size:10.5px; color:var(--muted); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .wsub{min-height:14px;}
+  .wsub:empty{display:none; min-height:0;}
+  .badges{display:flex; flex-wrap:wrap; gap:4px; margin:0 2px 4px;}
+  .badge{font-size:11px; font-weight:800; line-height:1.45; padding:1px 7px; border-radius:999px;
+    border:1px solid var(--line); background:var(--chip); color:var(--text); letter-spacing:.2px;}
+  .badge.rest{color:var(--warn); border-color:#5a4620;}
+  .badge.stop{color:#7dcea0; border-color:#245c45; background:rgba(125,206,160,.1); padding:0 6px;}
+  .badge.fail{color:var(--warn); border-color:#5a4620; background:rgba(255,180,84,.14); padding:0 6px;}
+  .setboard{display:flex; flex-direction:column; gap:3px; margin-top:5px;}
+  .setboard[hidden]{display:none !important;}
+  .setrow{display:flex; flex-wrap:wrap; align-items:center; gap:3px;}
+  .setwho{flex:0 0 14px; font-size:11px; font-weight:800; text-align:center;}
+  .setwho.matthias{color:var(--accent2);}
+  .setwho.nehemiah{color:var(--accent);}
+  .setwho.hailey{color:var(--warn);}
+  .setchip{font-size:12px; font-weight:800; line-height:1.35; padding:1px 5px; border-radius:6px;
+    background:#10141c; border:1px solid var(--line); color:var(--text); white-space:nowrap;}
+  .setchip.fail{color:var(--warn); border-color:#5a4620; background:rgba(255,180,84,.14);}
+  .setchip.spot{color:var(--warn); border-color:#5a4620;}
+  .setchip.guess{opacity:.55;}
   .wlast:empty{display:none;}
   .wsub.then{color:var(--accent2); font-weight:700;}
   .wsub.need{color:#ff8a94; font-weight:700;}
@@ -1128,9 +1156,120 @@ function updateSync(){
   el.textContent = txt; el.className = cls; el.hidden = !txt;
 }
 
+/* ---------- glance row: one chip per set, no sentences ----------
+   Top set is the number in the weight box. Back-off sets are about 12.5% lighter
+   (the middle of 10–15%), snapped to 5 lb on a barbell and to real dumbbells. */
+function cleanWeight(text){
+  return String(text == null ? "" : text).replace(/\s*lbs\s*$/i, "").replace(/^~/, "").trim();
+}
+function shortRest(s){
+  if(!s) return "";
+  let t = String(s).replace(/\s+after the (pair|trio|group)\s*$/i, "").trim();
+  t = t.replace(/(\d+)\s*s(?:ec(?:onds)?)?\s*[\u2013-]\s*(\d+)\s*min(?:utes)?/gi, "$1s\u2013$2m");
+  t = t.replace(/(\d+)\s*[\u2013-]\s*(\d+)\s*min(?:utes)?/gi, "$1\u2013$2m");
+  t = t.replace(/(\d+)\s*[\u2013-]\s*(\d+)\s*s(?:ec(?:onds)?)?/gi, "$1\u2013$2s");
+  t = t.replace(/(\d+)\s*min(?:utes)?/gi, "$1m");
+  t = t.replace(/(\d+)\s*s(?:ec(?:onds)?)?\b/gi, "$1s");
+  return t.replace(/\s+/g, " ").trim();
+}
+function chipLabel(ex, w){
+  if(metaFor(exKey(ex.name)).equip === "bw" && !(w > 0)) return "BW";
+  return fmtNum(w);
+}
+function snapBackoff(ex, topW){
+  const key = exKey(ex.name), m = metaFor(key);
+  if(!(topW > 0)) return 0;
+  const target = topW * 0.875;
+  if(m.equip === "db" || m.equip === "fixed" || (m.equip === "machine" && +m.step > 0)) return pickWeight(key, target).w;
+  return Math.max(0, Math.round(target / 5) * 5);
+}
+function planSetLoads(ex, weightText, nSets){
+  const n = nSets > 0 ? nSets : 0;
+  if(n < 2) return null;
+  const raw = cleanWeight(weightText);
+  if(!/^(\d+(\.\d+)?|\.\d+)$/.test(raw)) return null;
+  const top = parseFloat(raw);
+  const drop = ex.backoff ? snapBackoff(ex, top) : top;
+  const weightDiffers = !!(ex.backoff && Math.abs(drop - top) > 0.01);
+  const effortDiffers = ex.effort === "last";
+  if(!weightDiffers && !effortDiffers) return null;
+  const out = [];
+  for(let i = 1; i <= n; i++){
+    const w = (ex.backoff && i > 1) ? drop : top;
+    out.push({i:i, w:w, label:chipLabel(ex, w), drop: ex.backoff && i > 1 && Math.abs(w - top) > 0.01, fail: ex.effort === "last" && i === n});
+  }
+  return out;
+}
+function failSetLoads(ex, p, w, reps, tgt, nSets, rule, approxTop){
+  const n = nSets > 0 ? nSets : 0;
+  if(n < 1 || !(w >= 0)) return null;
+  const T = tgt && tgt.T;
+  const topLab = (approxTop ? "~" : "") + chipLabel(ex, w);
+  const mark = rule === "spot" ? "spot" : (rule === "fail" || rule === "failall" ? "fail" : "");
+  const out = [{i:1, label:topLab, kind:mark}];
+  if(!(n > 1) || !(T > 0)) return out;
+  const r = reps > 0 ? reps : T;
+  const b = backoffFor(ex, w, r, T, p);
+  const light = (b.bwOnly || (!(b.w > 0) && metaFor(exKey(ex.name)).equip === "bw")) ? "BW" : fmtNum(b.w);
+  const lab = (b.approx ? "~" : "") + light;
+  for(let i = 2; i <= n; i++) out.push({i:i, label:lab, kind: rule === "failall" ? "fail" : "", drop:true});
+  return out;
+}
+function setsHTML(loads, guess){
+  return loads.map(s=>{
+    const kind = s.kind || (s.fail ? "fail" : "");
+    const icon = kind === "fail" ? " \uD83D\uDD25" : (kind === "spot" ? " \u26A0" : "");
+    return `<span class="setchip${kind ? " " + kind : ""}${guess ? " guess" : ""}">S${s.i} ${esc(s.label)}${icon}</span>`;
+  }).join("");
+}
+function paintCardSets(card){
+  if(!card || !card.querySelector || !card._ex) return;
+  const board = card.querySelector(".setboard");
+  if(!board) return;
+  const ex = card._ex, n = card._sets, tgt = card._tgt;
+  const rows = [];
+  card.querySelectorAll(".cell").forEach(cell=>{
+    const who = (cell.className.match(/matthias|nehemiah|hailey/) || [])[0];
+    if(!who) return;
+    const fw = cell.querySelector("input.fw");
+    let loads = null, guess = false;
+    if(fw){
+      const rI = cell.querySelector("input.fr");
+      const r = rI && rI.value.trim() !== "" ? parseInt(rI.value, 10) : 0;
+      const typed = fw.value.trim();
+      if(typed !== ""){
+        const w = /^bw$/i.test(typed) ? 0 : num(typed);
+        if(w >= 0) loads = failSetLoads(ex, who, w, r, tgt, n, card._rule, false);
+      } else if(fw.placeholder && fw.placeholder !== "lbs"){
+        const approx = fw.placeholder.charAt(0) === "~";
+        const ph = fw.placeholder.replace(/^~/, "");
+        if(/^bw$/i.test(ph)) loads = failSetLoads(ex, who, 0, r, tgt, n, card._rule, approx);
+        else if(/^\d/.test(ph)) loads = failSetLoads(ex, who, num(ph), r, tgt, n, card._rule, approx);
+        guess = !!loads;
+      }
+    } else {
+      const box = cell.querySelector("input.wbox");
+      if(box) loads = planSetLoads(ex, box.value, n);
+    }
+    if(loads && loads.length) rows.push({p:who, loads:loads, guess:guess});
+  });
+  if(!rows.length){ board.innerHTML = ""; board.hidden = true; return; }
+  const groups = [];
+  rows.forEach(row=>{
+    const sig = (row.guess ? "g:" : "s:") + row.loads.map(s=> s.i + "=" + s.label + (s.fail ? "f" : "") + (s.kind || "")).join("|");
+    const g = groups.find(x=> x.sig === sig);
+    if(g) g.people.push(row.p);
+    else groups.push({sig:sig, people:[row.p], loads:row.loads, guess:row.guess});
+  });
+  board.hidden = false;
+  board.innerHTML = groups.map(g=>
+    `<div class="setrow">${g.people.map(p=> `<span class="setwho ${p}">${PEOPLE[p].charAt(0)}</span>`).join("")}${setsHTML(g.loads, g.guess)}</div>`
+  ).join("");
+}
+
 /* ---------- one person's boxes on a failure exercise ----------
    [weight] × [reps] for set 1 — the grey numbers are what the math says from last time.
-   The line under it is the weight for the rest of the sets, worked out from set 1. */
+   The chips for the other sets are worked out from set 1. */
 function failCell(ex, p, tgt, repsLabel, cell){
   const key = exKey(ex.name), isBW = metaFor(key).equip === "bw";
   // today's log counts even when only the weight was entered
@@ -1160,25 +1299,14 @@ function failCell(ex, p, tgt, repsLabel, cell){
     const e = today || lastLogEntry(key, p);
     lastEl.textContent = formatLogLine(e, isBW);
   }
-  // rest of the sets: from what you did on set 1, or (before you do it) from the grey numbers.
-  // Their reps stay at the target — only the weight changes.
-  const restReps = metaFor(key).rule === "failall" ? "max" : (range ? range[0].replace(/\s/g, "") : fmtNum(tgt.T));
+  // The other sets are the chips on the card, from this set-1 weight. No sentence.
   function restLine(){
-    const tw = typedW(), rt = rI.value.trim();
-    const w = tw != null ? tw : (sug ? sug.w : NaN);
-    const r = rt !== "" ? parseInt(rt, 10) : tgt.T;
-    const n = tgt.sets ? tgt.sets - 1 : 0;
-    const real = rt !== "";
-    if(n < 1 || !(r > 0)){ sub.textContent = ""; sub.className = "wsub"; return; }
-    if(!(w >= 0)){   // nobody has logged a weight here yet
-      sub.textContent = real ? "enter your weight" : "";
-      sub.className = "wsub" + (real ? " need" : "");
-      return;
+    sub.textContent = "";
+    sub.className = "wsub";
+    if(cell.closest){
+      const card = cell.closest(".card");
+      if(card) paintCardSets(card);
     }
-    const b = backoffFor(ex, w, r, tgt.T, p);
-    const guessW = tw == null && sug && sug.approx;   // still waiting for the real weight on a machine
-    sub.textContent = n + " more: " + ((b.approx || guessW) ? "~" : "") + loadTxt(b.w) + " × " + restReps;
-    sub.className = "wsub" + (real && !guessW ? " then" : "");
   }
   // Weight is stored as soon as it's typed — reps can come after. Never fill the
   // weight in from the grey suggestion; that used to overwrite what they typed
@@ -1240,10 +1368,15 @@ function exerciseCard(ex, opts){
   // most recent logged weight for a person (falls back to the plan weight)
   const lastOf = (p)=>{ for(let i=store.length-1;i>=0;i--){ if(store[i].person===p) return store[i].weight; } return null; };
 
+  const boxValue = (p)=>{
+    const draft = draftFor(key, p);
+    return (draft && draft.w) ? draft.w : (lastOf(p) != null ? fmtW(lastOf(p)) : (plan.people[p] || ""));
+  };
   const card = document.createElement("div");
   card.className = "card" + (editMode && selSet.has(key) ? " sel" : "") + (opts.done ? " done" : "");
+  card._ex = ex; card._sets = tgt.sets; card._tgt = tgt; card._rule = m.rule; card._fail = failMode;
 
-  // title row: [＋ / number] + name(opens image) + reps(editable) + failure rule + done
+  // title row: [＋ / number] + picture + name + reps + failure rule + done
   const trow = document.createElement("div");
   trow.className = "trow";
   if(editMode){
@@ -1254,9 +1387,40 @@ function exerciseCard(ex, opts){
   } else if(opts.orderSel){
     trow.appendChild(opts.orderSel);
   }
+  const wrap = document.createElement("div");
+  wrap.className = "thumbwrap";
+  const thumb = document.createElement("button");
+  thumb.type = "button";
+  thumb.className = "thumb" + (ex.img ? "" : " ph");
+  thumb.setAttribute("aria-label", ex.name + " picture");
+  if(ex.img){
+    const im = document.createElement("img");
+    im.alt = "";
+    im.src = (typeof IMGDATA !== "undefined" && IMGDATA[ex.img]) || encodeURI(ex.img);
+    im.onerror = ()=>{ thumb.classList.add("ph"); if(im.parentNode) im.remove(); };
+    thumb.appendChild(im);
+  }
+  thumb.onclick = ()=>{
+    if(editMode){ selSet.has(key) ? selSet.delete(key) : selSet.add(key); render(); }
+    else openImg(ex);
+  };
+  wrap.appendChild(thumb);
+  if(!editMode){
+    const info = document.createElement("button");
+    info.type = "button";
+    info.className = "miniinfo";
+    info.textContent = "i";
+    info.setAttribute("aria-label", "Coaching for " + ex.name);
+    info.onclick = (e)=>{ e.stopPropagation(); openInfo(ex); };
+    wrap.appendChild(info);
+  }
+  trow.appendChild(wrap);
   const title = document.createElement("button");
   title.className = "extitle";
-  title.innerHTML = `<span class="tnm">${ex.name}</span><span class="exicon">🖼</span>`;
+  const nm = document.createElement("span");
+  nm.className = "tnm";
+  nm.textContent = ex.name;
+  title.appendChild(nm);
   title.onclick = ()=>{
     if(editMode){ selSet.has(key) ? selSet.delete(key) : selSet.add(key); render(); }
     else openImg(ex);
@@ -1286,28 +1450,30 @@ function exerciseCard(ex, opts){
   }
   card.appendChild(trow);
 
-  const cue = document.createElement("div");
-  cue.className = "cue";
-  const mark = ex.effort === "last" ? "Last set: to failure" : "Stop 1–2 reps before failure";
-  let cueHtml = "";
-  if(ex.letter) cueHtml += `<span class="gl">${esc(ex.letter)}</span>`;
-  if(ex.muscles) cueHtml += `<span>${esc(ex.muscles)}</span>`;
-  cueHtml += `<span class="${ex.effort === "last" ? "fail" : "stop"}">${esc(mark)}</span>`;
-  if(ex.backoff) cueHtml += `<span class="back">Set 1 heaviest, sets 2–3 drop about 10–15%</span>`;
-  cue.innerHTML = cueHtml;
-  card.appendChild(cue);
-  if(ex.detail){
-    const det = document.createElement("div");
-    det.className = "detail";
-    det.textContent = ex.detail;
-    card.appendChild(det);
-  }
+  const badges = document.createElement("div");
+  badges.className = "badges";
   if(ex.rest && !opts.inGroup){
-    const rs = document.createElement("div");
-    rs.className = "exrest";
-    rs.textContent = ex.rest;
-    card.appendChild(rs);
+    const b = document.createElement("span");
+    b.className = "badge rest";
+    b.textContent = shortRest(ex.rest);
+    badges.appendChild(b);
   }
+  if(!failMode && ex.effort === "stop"){
+    const b = document.createElement("span");
+    b.className = "badge stop";
+    b.textContent = "\u270B";
+    b.title = "Stop 1\u20132 short";
+    b.setAttribute("aria-label", "Stop 1 to 2 short");
+    badges.appendChild(b);
+  } else if(!failMode && ex.effort === "last" && !PORDER.some(p => planSetLoads(ex, boxValue(p), tgt.sets))){
+    const b = document.createElement("span");
+    b.className = "badge fail";
+    b.textContent = "\uD83D\uDD25";
+    b.title = "Last set fail";
+    b.setAttribute("aria-label", "Last set to failure");
+    badges.appendChild(b);
+  }
+  if(badges.childNodes.length) card.appendChild(badges);
 
   // 3 weight boxes side by side with colored name labels
   const boxes = document.createElement("div");
@@ -1318,8 +1484,7 @@ function exerciseCard(ex, opts){
     if(failMode){
       failCell(ex, p, tgt, opts.reps || ex.reps, cell);
     } else {
-      const draft = draftFor(key, p);
-      const val = (draft && draft.w) ? draft.w : (lastOf(p) != null ? fmtW(lastOf(p)) : (plan.people[p] || ""));
+      const val = boxValue(p);
       const prev = lastLogEntry(key, p);
       cell.innerHTML =
         `<label class="plab ${p}">${PEOPLE[p]}</label>
@@ -1331,7 +1496,8 @@ function exerciseCard(ex, opts){
   boxes.querySelectorAll("input.wbox[data-person]").forEach(inp=>{
     const person = inp.dataset.person;
     // strip " lbs" while editing, and select it so typing replaces the old number
-    inp.onfocus = ()=>{ inp.value = inp.value.replace(/\s*lbs\s*$/i, ""); setTimeout(()=> inp.select(), 0); };
+    const paint = ()=> paintCardSets(card);
+    inp.onfocus = ()=>{ inp.value = inp.value.replace(/\s*lbs\s*$/i, ""); setTimeout(()=> inp.select(), 0); paint(); };
     const commit = (format)=>{
       const weight = inp.value.trim().replace(/\s*lbs\s*$/i, "");
       setDraft(key, person, {w: weight, r:""});
@@ -1346,15 +1512,32 @@ function exerciseCard(ex, opts){
         if(flashT.unref) flashT.unref();
       }
     };
-    inp.oninput = ()=> commit(false);   // on the phone immediately, even if they never tap away
-    inp.onchange = ()=> commit(true);
+    inp.oninput = ()=>{ commit(false); paint(); };   // on the phone immediately, even if they never tap away
+    inp.onchange = ()=>{ commit(true); paint(); };
   });
   card.appendChild(boxes);
+  const board = document.createElement("div");
+  board.className = "setboard";
+  board.hidden = true;
+  card.appendChild(board);
+  paintCardSets(card);
 
   return card;
 }
 
 /* ---------- pop-ups ---------- */
+function openInfo(ex){
+  const how = [];
+  if(ex.effort === "last") how.push("Last set to failure.");
+  else if(ex.effort === "stop") how.push("Stop 1\u20132 reps short.");
+  if(ex.backoff) how.push("Set 1 heaviest. Sets 2\u20133 drop about 10\u201315%.");
+  if(ex.rest) how.push(ex.rest);
+  const bits = [];
+  if(ex.muscles) bits.push(`<div class="sec">Muscles</div><div class="pop-info">${esc(ex.muscles)}</div>`);
+  if(how.length) bits.push(`<div class="sec">How</div><div class="pop-info">${how.map(esc).join("<br>")}</div>`);
+  if(ex.detail) bits.push(`<div class="sec">Coaching</div><div class="pop-info">${esc(ex.detail)}</div>`);
+  openPop(`<button class="modal-x" aria-label="Close">\u2715</button><div class="modal-title">${esc(ex.name)}</div>${bits.join("")}`);
+}
 function openPop(html, cls){
   const ov = document.createElement("div");
   ov.className = "modal top";
@@ -1662,7 +1845,7 @@ function render(nav){
       ttl.textContent = (g.letter ? g.letter + " · " : "") + "Superset";
       label.appendChild(ttl);
       if(g.rest){
-        const rs = document.createElement("span"); rs.className = "ssrest"; rs.textContent = g.rest;
+        const rs = document.createElement("span"); rs.className = "ssrest"; rs.textContent = shortRest(g.rest);
         label.appendChild(rs);
       }
       if(g.station){
